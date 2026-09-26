@@ -1,10 +1,11 @@
 # lyre
 
-`lyre.py` converts a MIDI file into a key chart for the Windsong Lyre in Genshin Impact, and renders the chart back to MIDI for listening.
+`lyre.py` converts a MIDI file into a key chart for the Windsong Lyre in Genshin Impact, and renders the chart back to MIDI for listening. `play.py` plays a chart in the game.
 
 ```sh
 uv run lyre.py song.mid                           # writes song.txt and song.lyre.mid
 uv run lyre.py song.mid --max-keys 2 -o easy.txt  # writes easy.txt and easy.lyre.mid
+uv run play.py song.txt                           # plays song.txt in the focused window
 ./check.sh                                        # ruff, pyright, pytest
 ```
 
@@ -34,5 +35,18 @@ presses C4 and C5 together, then C5, G5, C5, F5, C5, E5 and C5 on the following 
 Only the first time signature is used for bar lines.
 
 The preview MIDI keeps the original tempo map and plays every press on a General MIDI harp, ringing for one beat or until the same key is pressed again.
+
+## Playing
+
+`play.py` sends key presses to the focused window, so it starts one second after launch to leave time to switch to the game. The game only accepts them from a process with administrator rights. The keys of a chord go down together. With `-k`, each press of `K`, `,` or space sends the next key or chord, rests are skipped, and `` ` `` quits.
+
+A chart from `lyre.py` plays at the tempo on its header line. A song with tempo changes therefore plays at its first tempo throughout.
+
+With `--loose`, the file is a chart copied from the community, which has no durations. Only parenthesized chords, capital letters and spaces count, so headings, dashes, `/` and other text in the copy are ignored, and `#` starts a comment. A key or chord takes 0.15 s, a space 0.1 s. Keys inside `{}`, `【】` or `[]` take half the key time, on the guess that they mark a fast run or an arpeggio. Lines starting with `@` are directives:
+
+- `@note_delay S` and `@space_delay S` set the time of a key and a space in seconds.
+- `@clear` drops everything before it.
+- `@bar_sep 'S'` splits lines into bars at `S`, `/` by default.
+- `@break_after N` adds a space after each bar made of exactly N keys and spaces, which separates runs of single notes.
 
 Open design questions are recorded under `docs/`.
