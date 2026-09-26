@@ -3,7 +3,6 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 
-# Songs and their generated charts.
+# Songs and their generated charts and previews.
 *.mid
-/*.md
-!/README.md
+*.txt
