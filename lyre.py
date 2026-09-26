@@ -13,6 +13,7 @@ KEYS = 'ZXCVBNMASDFGHJQWERTYU'
 WHITE = (0, 2, 4, 5, 7, 9, 11)
 LOWEST = 48
 HIGHEST = 83
+HORN_LOWEST = 60  # C4; the horn has only the QWERTYU and ASDFGHJ rows.
 KEY_OF = {LOWEST + 12 * (i // 7) + WHITE[i % 7]: k for i, k in enumerate(KEYS)}
 
 # Roughness of each interval class 0..6 (unison through tritone).
@@ -79,21 +80,24 @@ def is_white(pitch: int) -> bool:
     return pitch % 12 in WHITE
 
 
-def fold(pitch: int) -> int:
-    while pitch < LOWEST:
+def fold(pitch: int, lowest: int) -> int:
+    while pitch < lowest:
         pitch += 12
     while pitch > HIGHEST:
         pitch -= 12
     return pitch
 
 
-def choose_transpose(pitches: tuple[int, ...]) -> int:
-    '''Minimize the notes that land on black keys or outside the range, then the shift.'''
+def choose_transpose(pitches: tuple[int, ...], lowest: int) -> int:
+    '''Minimize the notes on black keys, then those outside the range, then the shift.
 
-    def cost(k: int) -> tuple[int, int]:
+    A black key costs more than any octave fold because resolving it changes the pitch class.
+    '''
+
+    def cost(k: int) -> tuple[int, int, int]:
         moved = [p + k for p in pitches]
-        bad = sum(not is_white(p) for p in moved) + sum(not LOWEST <= p <= HIGHEST for p in moved)
-        return bad, abs(k)
+        black = sum(not is_white(p) for p in moved)
+        return black, sum(not lowest <= p <= HIGHEST for p in moved), abs(k)
 
     return min(range(-24, 25), key=cost)
 
@@ -154,12 +158,12 @@ def thin(pitches: tuple[int, ...], max_keys: int) -> tuple[int, ...]:
     return tuple(sorted([pitches[-1], pitches[0], *inner][:max_keys]))
 
 
-def arrange(song: Song, max_keys: int | None = None) -> Chart:
+def arrange(song: Song, max_keys: int | None = None, lowest: int = LOWEST) -> Chart:
     tpb = song.ticks_per_beat
     numerator, denominator = song.time_signature
     beat = tpb * 4 // denominator
-    transpose = choose_transpose(tuple(n.pitch for n in song.notes))
-    notes = tuple(Note(n.tick, fold(n.pitch + transpose)) for n in song.notes)
+    transpose = choose_transpose(tuple(n.pitch for n in song.notes), lowest)
+    notes = tuple(Note(n.tick, fold(n.pitch + transpose, lowest)) for n in song.notes)
     notes = resolve(notes, beat)
     slot = choose_slot(tuple(n.tick for n in notes), beat, tpb // 32)
     chords: dict[int, set[int]] = {}
@@ -247,9 +251,11 @@ def main() -> None:
     parser.add_argument(
         '--max-keys', type=int, choices=range(1, 22), metavar='N', help='keys pressed at once'
     )
+    parser.add_argument('--horn', action='store_true', help='play on the horn, C4 to B5')
     args = parser.parse_args()
     source: Path = args.midi
-    chart = arrange(read_midi(source), args.max_keys)
+    lowest = HORN_LOWEST if args.horn else LOWEST
+    chart = arrange(read_midi(source), args.max_keys, lowest)
     chart_path: Path = args.output or source.with_suffix('.md')
     preview_path = chart_path.with_suffix('.lyre.mid')
     chart_path.write_text(render(chart, source.stem), encoding='utf-8')
