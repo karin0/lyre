@@ -70,3 +70,21 @@ def test_preview_midi_matches_chart(tmp_path: Path):
     assert sorted(starts) == [(0, 60), (0, 64), (TPB, 60), (4 * TPB, 72)]
     # A repeated key cuts off its own ring.
     assert ends[60] == [TPB, 2 * TPB]
+
+
+def test_thin_keeps_outer_voices():
+    assert lyre.thin((52, 57, 60), 2) == (52, 60)
+    assert lyre.thin((57, 60, 72), 2) == (57, 72)
+    assert lyre.thin((52, 57, 60), 1) == (60,)
+    assert lyre.thin((60, 64), 2) == (60, 64)
+
+
+def test_thin_drops_doublings_then_fifths():
+    # C3 E3 G3 C4 E4: E3 and C4 are doublings, the one nearer the top goes first.
+    assert lyre.thin((48, 52, 55, 60, 64), 4) == (48, 52, 55, 64)
+    assert lyre.thin((48, 55, 57, 64), 3) == (48, 57, 64)
+
+
+def test_max_keys_caps_every_press():
+    notes = tuple(Note(0, p) for p in (48, 52, 55, 60))
+    assert lyre.arrange(song(notes), 2).events == ((0, (48, 60)),)

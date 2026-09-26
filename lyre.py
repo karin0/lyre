@@ -137,7 +137,24 @@ def choose_slot(ticks: tuple[int, ...], beat: int, tolerance: int) -> int:
     return slots[-1]
 
 
-def arrange(song: Song) -> Chart:
+def thin(pitches: tuple[int, ...], max_keys: int) -> tuple[int, ...]:
+    '''Keep the top voice, then the bass, then the inner voices that add the most harmony.
+
+    Among inner voices, octave doublings go first, then perfect fifths above another chord
+    tone, then the voices nearest the top.
+    '''
+    if len(pitches) <= max_keys:
+        return pitches
+    classes = [p % 12 for p in pitches]
+
+    def redundancy(p: int) -> tuple[bool, bool, int]:
+        return classes.count(p % 12) > 1, (p - 7) % 12 in classes, p
+
+    inner = sorted(pitches[1:-1], key=redundancy)
+    return tuple(sorted([pitches[-1], pitches[0], *inner][:max_keys]))
+
+
+def arrange(song: Song, max_keys: int | None = None) -> Chart:
     tpb = song.ticks_per_beat
     numerator, denominator = song.time_signature
     beat = tpb * 4 // denominator
@@ -149,7 +166,9 @@ def arrange(song: Song) -> Chart:
     for n in notes:
         chords.setdefault(round(n.tick / slot), set()).add(n.pitch)
     return Chart(
-        events=tuple((s, tuple(sorted(chords[s]))) for s in sorted(chords)),
+        events=tuple(
+            (s, thin(tuple(sorted(chords[s])), max_keys or len(chords[s]))) for s in sorted(chords)
+        ),
         slot_ticks=slot,
         slots_per_beat=beat // slot,
         beats_per_bar=numerator,
@@ -222,11 +241,17 @@ def write_midi(chart: Chart, path: Path) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('midi', type=Path)
+    parser.add_argument(
+        '-o', '--output', type=Path, help='chart path, default: the input with suffix .md'
+    )
+    parser.add_argument(
+        '--max-keys', type=int, choices=range(1, 22), metavar='N', help='keys pressed at once'
+    )
     args = parser.parse_args()
     source: Path = args.midi
-    chart = arrange(read_midi(source))
-    chart_path = source.with_suffix('.md')
-    preview_path = source.with_suffix('.lyre.mid')
+    chart = arrange(read_midi(source), args.max_keys)
+    chart_path: Path = args.output or source.with_suffix('.md')
+    preview_path = chart_path.with_suffix('.lyre.mid')
     chart_path.write_text(render(chart, source.stem), encoding='utf-8')
     write_midi(chart, preview_path)
     print(f'{chart_path}\n{preview_path}')
