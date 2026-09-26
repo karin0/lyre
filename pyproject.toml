@@ -3,6 +3,7 @@ name = "lyre"
 version = "0.1.0"
 requires-python = ">=3.14"
 dependencies = [
+    "keyboard>=0.13.5",
     "mido>=1.3.3",
 ]
 
@@ -11,10 +12,13 @@ dev = [
     "pyright>=1.1.414",
     "pytest>=9.1.1",
     "ruff>=0.16.7",
+    "types-keyboard>=0.13.2.20260508",
 ]
 
 [tool.uv]
 exclude-newer = "15 days"
+# keyboard pulls about 160 pyobjc packages on macOS.
+environments = ["sys_platform == 'linux'", "sys_platform == 'win32'"]
 
 [tool.ruff]
 line-length = 100
