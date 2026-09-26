@@ -24,13 +24,14 @@ def test_key_map_covers_white_keys_c3_to_b5():
 
 def test_g_major_moves_to_c_major():
     g_major = (55, 57, 59, 60, 62, 64, 66, 67)
-    assert lyre.choose_transpose(g_major) == 5
+    assert lyre.choose_transpose(g_major, lyre.LOWEST) == 5
 
 
 def test_out_of_range_is_folded_by_octaves():
-    assert lyre.fold(36) == 48
-    assert lyre.fold(95) == 83
-    assert lyre.fold(60) == 60
+    assert lyre.fold(36, lyre.LOWEST) == 48
+    assert lyre.fold(95, lyre.LOWEST) == 83
+    assert lyre.fold(60, lyre.LOWEST) == 60
+    assert lyre.fold(50, lyre.HORN_LOWEST) == 62
 
 
 def test_accidental_takes_the_consonant_neighbour():
@@ -88,3 +89,16 @@ def test_thin_drops_doublings_then_fifths():
 def test_max_keys_caps_every_press():
     notes = tuple(Note(0, p) for p in (48, 52, 55, 60))
     assert lyre.arrange(song(notes), 2).events == ((0, (48, 60)),)
+
+
+def test_black_keys_outweigh_octave_folds():
+    # A G major bass line under a melody with one F sharp and one C. Shifting by 10 folds nothing
+    # but puts the C on a black key; shifting by 17 folds two notes and keeps every key white.
+    g_major = (50, 52, 55, 59) * 5 + (60, 64, 66, 67, 71)
+    assert lyre.choose_transpose(g_major, lyre.HORN_LOWEST) == 17
+
+
+def test_horn_keeps_every_key_on_the_upper_rows():
+    notes = (Note(0, 43), Note(0, 67), Note(TPB, 50))
+    chart = lyre.arrange(song(notes), lowest=lyre.HORN_LOWEST)
+    assert all(p >= lyre.HORN_LOWEST for _, pitches in chart.events for p in pitches)
