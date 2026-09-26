@@ -34,3 +34,5 @@ presses C4 and C5 together, then C5, G5, C5, F5, C5, E5 and C5 on the following 
 Only the first time signature is used for bar lines.
 
 The preview MIDI keeps the original tempo map and plays every press on a General MIDI harp, ringing for one beat or until the same key is pressed again.
+
+Open design questions are recorded under `docs/`.
