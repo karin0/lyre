@@ -3,8 +3,8 @@
 `lyre.py` converts a MIDI file into a key chart for the Windsong Lyre in Genshin Impact, and renders the chart back to MIDI for listening.
 
 ```sh
-uv run lyre.py song.mid                           # writes song.md and song.lyre.mid
-uv run lyre.py song.mid --max-keys 2 -o easy.md   # writes easy.md and easy.lyre.mid
+uv run lyre.py song.mid                           # writes song.txt and song.lyre.mid
+uv run lyre.py song.mid --max-keys 2 -o easy.txt  # writes easy.txt and easy.lyre.mid
 ./check.sh                                        # ruff, pyright, pytest
 ```
 
@@ -14,7 +14,7 @@ The lyre has the 21 white keys C3 to B5. `QWERTYU` plays C5 to B5, `ASDFGHJ` C4 
 
 ## Chart format
 
-A chart is a Markdown file with the song title as its heading, a line giving the tempo, time signature, slot length and transposition, and the keys in a code block. Each key, parenthesized chord, or space is one grid slot, and a space is a slot with no onset. A `/` closes every beat of the time signature, a line is one bar, and a blank line follows every four bars. With one slot per sixteenth note, the bar
+A chart is a text file in Markdown, with the song title as its heading, a line giving the tempo, time signature, slot length and transposition, and the keys in a code block. Each key, parenthesized chord, or space is one grid slot, and a space is a slot with no onset. A `/` closes every beat of the time signature, a line is one bar, and a blank line follows every four bars. With one slot per sixteenth note, the bar
 
 ```
 (AQ) Q /T Q /R Q /E Q /

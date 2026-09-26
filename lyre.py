@@ -246,7 +246,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('midi', type=Path)
     parser.add_argument(
-        '-o', '--output', type=Path, help='chart path, default: the input with suffix .md'
+        '-o', '--output', type=Path, help='chart path, default: the input with suffix .txt'
     )
     parser.add_argument(
         '--max-keys', type=int, choices=range(1, 22), metavar='N', help='keys pressed at once'
@@ -256,7 +256,7 @@ def main() -> None:
     source: Path = args.midi
     lowest = HORN_LOWEST if args.horn else LOWEST
     chart = arrange(read_midi(source), args.max_keys, lowest)
-    chart_path: Path = args.output or source.with_suffix('.md')
+    chart_path: Path = args.output or source.with_suffix('.txt')
     preview_path = chart_path.with_suffix('.lyre.mid')
     chart_path.write_text(render(chart, source.stem), encoding='utf-8')
     write_midi(chart, preview_path)
