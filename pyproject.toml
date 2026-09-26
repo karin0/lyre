@@ -1,0 +1,56 @@
+[project]
+name = "lyre"
+version = "0.1.0"
+requires-python = ">=3.14"
+dependencies = [
+    "mido>=1.3.3",
+]
+
+[dependency-groups]
+dev = [
+    "pyright>=1.1.414",
+    "pytest>=9.1.1",
+    "ruff>=0.16.7",
+]
+
+[tool.uv]
+exclude-newer = "15 days"
+
+[tool.ruff]
+line-length = 100
+target-version = "py314"
+
+[tool.ruff.lint]
+select = ["ALL", "ANN401"]
+ignore = [
+    "A", "ANN", "ARG", "COM812", "CPY", "D", "EM", "ERA", "FAST", "FBT", "PLR", "PTH", "TD",
+    "BLE001", "C901", "N818", "PLC0415", "PLW1508", "PLW2901", "RET503", "S101", "SLF001",
+    "TC001", "TC002", "TC003", "TC006", "TRY003", "TRY004",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"lyre.py" = ["T20"]
+"**/tests/*" = ["ANN201", "B018", "INP001", "PLW0108", "PT018", "S101", "SIM105", "T20",
+                # Fixtures stand in for credentials, which is what makes them fixtures.
+                "S105", "S106"]
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"__future__.annotations".msg = "PEP 649 lazy annotations are the 3.14 default"
+
+[tool.ruff.lint.flake8-quotes]
+docstring-quotes = "single"
+inline-quotes = "single"
+multiline-quotes = "single"
+
+[tool.ruff.lint.isort]
+lines-between-types = 1
+
+[tool.ruff.format]
+quote-style = "preserve"
+
+[tool.pyright]
+typeCheckingMode = "strict"
+pythonVersion = "3.14"
+
+[tool.pytest]
+pythonpath = ["."]
