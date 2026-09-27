@@ -1,6 +1,6 @@
 # lyre
 
-`lyre.py` converts a MIDI file into a key chart for the Windsong Lyre in Genshin Impact, written for `play.py` or for a human to read, and optionally renders the chart back to MIDI for listening. `play.py` plays a chart in the game.
+`lyre.py` converts a MIDI file or a chart copied from the community into a key chart for the Windsong Lyre in Genshin Impact, written for `play.py` or for a human to read, and optionally renders the chart back to MIDI for listening. `play.py` plays a chart in the game.
 
 ```sh
 uv run lyre.py song.mid                             # writes song.txt
@@ -9,6 +9,7 @@ uv run lyre.py song.mid --midi                      # writes song.txt and song.l
 uv run lyre.py song.mid --horn --max-keys 2 --hold  # writes song.horn.max2.hold.txt
 uv run lyre.py song.mid --max-keys 2 -o easy.txt    # writes easy.txt
 uv run lyre.py song.mid --list-parts                # lists the parts to pick with --parts
+uv run lyre.py copy.sh                              # reads a community chart, writes copy.txt
 uv run lyre.py song.mid --parts 0 5                 # writes song.parts0+5.txt
 uv run play.py song.txt                             # plays song.txt in the focused window
 ./check.sh                                          # ruff, pyright, pytest
@@ -54,17 +55,24 @@ with one slot a 1/24 note. `play.py` reads both formats.
 
 Only the first time signature is used for bar lines.
 
+## Community charts
+
+An input without a `.mid` or `.midi` suffix is a chart copied from the community, which has no durations. Each line is stripped, and only parenthesized chords, capital letters and spaces count, so headings, dashes and other text in the copy are ignored, and `#` starts a comment. A key or chord takes 0.15 s, a space 0.1 s. Keys inside `{}`, `【】` or `[]` take half the key time, on the guess that they mark a fast run or an arpeggio. A key becomes a sixteenth note, so the chart gets the tempo at which four keys fill a beat, 100 BPM by default. Lines starting with `@` are directives:
+
+- `@note_delay S` and `@space_delay S` set the time of a key and a space in seconds.
+- `@bpm N` reads the lines after it as beats at N BPM. Each separator closes a beat, which splits evenly among its keys, chords and spaces, and brackets change nothing. `@note_delay` or `@space_delay` returns to fixed times.
+- `@clear` drops everything before it.
+- `@bar_sep 'S'` sets the separator, `/` by default. It splits bars for `@break_after`, and beats under `@bpm`.
+- `@break_after N` adds a space after each bar made of exactly N keys and spaces, which separates runs of single notes. It is rejected under `@bpm`.
+
+`@bpm` is written by hand, since many copies with separators lost too many spaces to be read as beats. Under `@bpm`, a beat whose slot count differs from the most common one and that has a key after its first slot stops the conversion with its line, because its missing spaces could have stood anywhere in it. A beat with only its first slot pressed is a rest and passes.
+
+The keys then go through steps 2 to 7 above as one part in 4/4. Onsets that would need more than 16 slots in a beat, such as a space and a bracketed key in one beat at the default times, move by up to 1/32 beat. A chart whose default path is its input, such as `copy.txt`, needs `-o`.
+
 The preview MIDI written with `--midi` is named after the chart, such as `song.human.lyre.mid` beside `song.human.txt`. It follows the grid of the chart, keeps the original tempo map and plays every press on a General MIDI harp. A held key sounds until its release, and a tap rings for one beat or until the same key is pressed again.
 
 ## Playing
 
 `play.py` sends key presses to the focused window. The game runs on Windows and only accepts them from a process with administrator rights. The keys of a chord go down together. The song plays while Scroll Lock is on and pauses while it is off, and it starts one second of playing time after launch to leave time to switch to the game. A pause releases the held keys, and they stay up after it. A song played to its end turns Scroll Lock off, so the next song waits for it. With `-k`, each press of `K`, `,` or space sends the next key or chord together with the releases before it, rests are skipped, `` ` `` quits, and Scroll Lock has no effect. The releases after the last press need one more trigger. Keys still down are released when playing stops.
-
-With `--loose`, the file is a chart copied from the community, which has no durations. Only parenthesized chords, capital letters and spaces count, so headings, dashes, `/` and other text in the copy are ignored, and `#` starts a comment. A key or chord takes 0.15 s, a space 0.1 s. Keys inside `{}`, `【】` or `[]` take half the key time, on the guess that they mark a fast run or an arpeggio. Lines starting with `@` are directives:
-
-- `@note_delay S` and `@space_delay S` set the time of a key and a space in seconds.
-- `@clear` drops everything before it.
-- `@bar_sep 'S'` splits lines into bars at `S`, `/` by default.
-- `@break_after N` adds a space after each bar made of exactly N keys and spaces, which separates runs of single notes.
 
 Open design questions are recorded under `docs/`.

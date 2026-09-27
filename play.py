@@ -1,7 +1,6 @@
 '''Play a key chart on the Windsong Lyre by sending key presses to the focused window.'''
 
 import argparse
-import ast
 import ctypes
 import math
 import queue
@@ -18,9 +17,6 @@ type Note = tuple[float, float, str]
 
 HEADER = re.compile(r'([\d.]+) BPM, \d+/(\d+)')
 TOKEN = re.compile(r'<([\d.]+)>|\(([A-Za-z]+)\)|([A-Za-z ])')
-LOOSE_TOKEN = re.compile(r'\([A-Z]+\)|[A-Z]| |[{【\[]|[}】\]]')
-NOTE_DELAY = 0.15
-SPACE_DELAY = 0.1
 START_DELAY = 1  # Time to switch to the game window.
 POLL = 0.02
 TRIGGERS = frozenset(('k', ',', 'space'))
@@ -60,59 +56,6 @@ def parse_chart(text: str) -> tuple[Note, ...]:
                 else:
                     raise ValueError(f'{key.upper()} released without a press')
             now += 60 / bpm * quarters_per_beat / slots
-    return tuple(notes)
-
-
-def parse_loose(text: str) -> tuple[Note, ...]:
-    '''Time the presses of a community chart, which gives no durations, at fixed delays.
-
-    Keys inside `{}`, `【】` or `[]` form a fast run at half the note delay.
-    '''
-    notes: list[Note] = []
-    now = 0.0
-    note_delay, space_delay = NOTE_DELAY, SPACE_DELAY
-    bar_sep = '/'
-    break_after = None
-    for raw in text.splitlines():
-        line = raw.partition('#')[0].strip()
-        match line.split(maxsplit=1):
-            case []:
-                continue
-            case ['@clear']:
-                notes.clear()
-                now = 0.0
-                continue
-            case ['@bar_sep', arg]:
-                bar_sep = ast.literal_eval(arg)
-                continue
-            case ['@break_after', arg]:
-                break_after = re.compile(f'[A-Z ]{{{int(arg)}}}')
-                continue
-            case ['@note_delay', arg]:
-                note_delay = float(arg)
-                continue
-            case ['@space_delay', arg]:
-                space_delay = float(arg)
-                continue
-            case [directive, *_] if directive.startswith('@'):
-                raise ValueError(f'unknown directive: {line}')
-            case _:
-                pass
-        depth = 0
-        for bar in line.split(bar_sep):
-            for token in LOOSE_TOKEN.findall(bar):
-                match token:
-                    case '{' | '【' | '[':
-                        depth += 1
-                    case '}' | '】' | ']':
-                        depth = max(depth - 1, 0)
-                    case ' ':
-                        now += space_delay
-                    case _:
-                        notes.extend((now, now, key) for key in token.strip('()'))
-                        now += note_delay / 2 if depth else note_delay
-            if break_after and break_after.fullmatch(bar):
-                now += space_delay
     return tuple(notes)
 
 
@@ -228,15 +171,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('chart', type=Path)
     parser.add_argument(
-        '--loose', action='store_true', help='read a community chart, timed by fixed delays'
-    )
-    parser.add_argument(
         '-k', '--step', action='store_true', help='press on each K, comma or space; ` quits'
     )
     args = parser.parse_args()
     chart: Path = args.chart
-    text = chart.read_text(encoding='utf-8')
-    notes = parse_loose(text) if args.loose else parse_chart(text)
+    notes = parse_chart(chart.read_text(encoding='utf-8'))
     if args.step:
         step(notes)
     else:
