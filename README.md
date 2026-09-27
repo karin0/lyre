@@ -57,15 +57,16 @@ Only the first time signature is used for bar lines.
 
 ## Community charts
 
-An input without a `.mid` or `.midi` suffix is a chart copied from the community, which has no durations. Each line is stripped, and only the capital letters of the 21 keys, chords of them in parentheses and spaces count, so headings, dashes and other text in the copy are ignored, and `#` starts a comment. A key or chord takes 0.15 s, a space 0.1 s. Keys inside `{}`, `【】` or `[]` take half the key time, on the guess that they mark a fast run or an arpeggio. A key becomes a sixteenth note, so the chart gets the tempo at which four keys fill a beat, 100 BPM by default. Lines starting with `@` are directives:
+An input without a `.mid` or `.midi` suffix is a chart copied from the community, which has no durations. Each line is stripped, and only the capital letters of the 21 keys, chords of them in parentheses and spaces count, so headings, dashes and other text in the copy are ignored, and `#` starts a comment. A key or chord takes 0.15 s, a space 0.1 s. Keys inside `{}`, `【】` or `[]` take half the key time, on the guess that they mark a fast run or an arpeggio. A key becomes a sixteenth note, so the chart gets the tempo at which four keys fill a beat, 100 BPM by default.
 
-- `@note_delay S` and `@space_delay S` set the time of a key and a space in seconds.
-- `@bpm N` reads the lines after it as beats at N BPM. Each separator closes a beat, which splits evenly among its keys, chords and spaces, and brackets change nothing. `@note_delay` or `@space_delay` returns to fixed times.
+A tempo marker such as `<73>`, written as in the chart format above, reads the rest of the chart as beats from that slot on. Each separator closes a beat, which splits evenly among its keys, chords and spaces, and brackets change nothing. Further markers change the tempo at their slot, so a ritardando is written as in a key chart. Markers are written by hand, since many copies with separators lost too many spaces to be read as beats. A beat whose slot count differs from the most common one and that has a key after its first slot stops the conversion with its line, because its missing spaces could have stood anywhere in it. A beat with only its first slot pressed is a rest and passes.
+
+Lines starting with `@` are directives:
+
+- `@note_delay S` and `@space_delay S` set the time of a key and a space in seconds, and return from beats to fixed times.
 - `@clear` drops everything before it.
-- `@bar_sep 'S'` sets the separator, `/` by default. It splits bars for `@break_after`, and beats under `@bpm`.
-- `@break_after N` adds a space after each bar made of exactly N keys and spaces, which separates runs of single notes. It is rejected under `@bpm`.
-
-`@bpm` is written by hand, since many copies with separators lost too many spaces to be read as beats. Under `@bpm`, a beat whose slot count differs from the most common one and that has a key after its first slot stops the conversion with its line, because its missing spaces could have stood anywhere in it. A beat with only its first slot pressed is a rest and passes.
+- `@bar_sep 'S'` sets the separator, `/` by default. It splits bars for `@break_after`, and beats after a tempo marker.
+- `@break_after N` adds a space after each bar made of exactly N keys and spaces, which separates runs of single notes. It is rejected in beats.
 
 The keys then go through steps 2 to 7 above as one part in 4/4. Onsets that would need more than 16 slots in a beat, such as a space and a bracketed key in one beat at the default times, move by up to 1/32 beat. A chart whose default path is its input, such as `copy.txt`, needs `-o`.
 

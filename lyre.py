@@ -32,6 +32,8 @@ MIDI_SUFFIXES = ('.mid', '.midi')
 SLOT_PATTERN = rf'\([{KEYS}]+\)|[{KEYS}]| '
 LOOSE_TOKEN = re.compile(rf'{SLOT_PATTERN}|[{{【\[]|[}}】\]]')
 SLOT = re.compile(SLOT_PATTERN)
+TEMPO_MARKER = re.compile(r'<([\d.]+)>')
+BEAT_TOKEN = re.compile(rf'{TEMPO_MARKER.pattern}|{SLOT_PATTERN}')
 NOTE_DELAY = Fraction('0.15')
 SPACE_DELAY = Fraction('0.1')
 LOOSE_TICKS_PER_BEAT = 480
@@ -133,8 +135,8 @@ def read_midi(path: Path) -> Song:
 def read_loose(text: str) -> Song:
     '''Read a community chart as one part of taps in 4/4.
 
-    With fixed delays, a key takes a sixteenth note at the tempo its delay implies. Under
-    `@bpm`, each separator closes a beat that splits evenly among its slots.
+    With fixed delays, a key takes a sixteenth note at the tempo its delay implies. From a
+    tempo marker on, each separator closes a beat that splits evenly among its slots.
     '''
     tpb = LOOSE_TICKS_PER_BEAT
     notes: list[Note] = []
@@ -142,34 +144,56 @@ def read_loose(text: str) -> Song:
     beats: list[tuple[int, str, int, bool]] = []  # (line, text, slots, key after the first slot)
     now = Fraction(0)  # In beats.
     note_delay, space_delay = NOTE_DELAY, SPACE_DELAY
-    bpm_value: Fraction | None = None
+    bpm: Fraction | None = None  # Set while reading beats.
     bar_sep = '/'
     break_after = None
-    pending = ''  # The unclosed beat under @bpm.
+    pending = ''  # The unclosed beat.
 
     def press(token: str, at: Fraction) -> None:
         tick = round(at * tpb)
         notes.extend(Note(tick, PITCH_OF[k], tick) for k in token.strip('()'))
 
-    def set_tempo() -> None:
-        tempo = (
-            round(4 * note_delay * 1_000_000)
-            if bpm_value is None
-            else round(60_000_000 / bpm_value)
-        )
-        tick = round(now * tpb)
+    def set_tempo(at: Fraction) -> None:
+        tempo = round(4 * note_delay * 1_000_000) if bpm is None else round(60_000_000 / bpm)
+        tick = round(at * tpb)
         if tempos and tempos[-1][0] == tick:
             tempos.pop()
         if not tempos or tempos[-1][1] != tempo:
             tempos.append((tick, tempo))
 
-    def close_beat(beat: str, line: int) -> None:
+    def read_timed(text: str) -> None:
         nonlocal now
+        beat_seconds = 4 * note_delay
+        depth = 0
+        for bar in text.split(bar_sep):
+            for token in LOOSE_TOKEN.findall(bar):
+                match token:
+                    case '{' | '【' | '[':
+                        depth += 1
+                    case '}' | '】' | ']':
+                        depth = max(depth - 1, 0)
+                    case ' ':
+                        now += space_delay / beat_seconds
+                    case _:
+                        press(token, now)
+                        now += (note_delay / 2 if depth else note_delay) / beat_seconds
+            if break_after and break_after.fullmatch(bar):
+                now += space_delay / beat_seconds
+
+    def close_beat(beat: str, line: int) -> None:
+        nonlocal now, bpm
         slots = SLOT.findall(beat)
         beats.append((line, beat, len(slots), any(s != ' ' for s in slots[1:])))
-        for i, slot in enumerate(slots):
-            if slot != ' ':
-                press(slot, now + Fraction(i, len(slots)))
+        i = 0
+        for token in BEAT_TOKEN.finditer(beat):
+            at = now + Fraction(i, len(slots) or 1)
+            if token[1]:
+                bpm = Fraction(token[1])
+                set_tempo(at)
+            else:
+                if token[0] != ' ':
+                    press(token[0], at)
+                i += 1
         now += 1
 
     def close_pending(line: int) -> None:
@@ -178,7 +202,7 @@ def read_loose(text: str) -> Song:
             close_beat(pending, line)
         pending = ''
 
-    set_tempo()
+    set_tempo(now)
     number = 0
     for number, raw in enumerate(text.splitlines(), 1):
         line = raw.partition('#')[0].strip()
@@ -186,51 +210,38 @@ def read_loose(text: str) -> Song:
             continue
         if line.startswith('@'):
             close_pending(number)
-        match line.split(maxsplit=1):
-            case ['@clear']:
-                notes.clear()
-                tempos.clear()
-                beats.clear()
-                now = Fraction(0)
-                set_tempo()
-            case ['@bar_sep', arg]:
-                bar_sep = ast.literal_eval(arg)
-            case ['@break_after', arg]:
-                if bpm_value is not None:
-                    raise ValueError(f'line {number}: @break_after under @bpm')
-                break_after = re.compile(f'[A-Z ]{{{int(arg)}}}')
-            case ['@note_delay', arg]:
-                note_delay, bpm_value = Fraction(arg), None
-                set_tempo()
-            case ['@space_delay', arg]:
-                space_delay, bpm_value = Fraction(arg), None
-                set_tempo()
-            case ['@bpm', arg]:
-                bpm_value = Fraction(arg)
-                set_tempo()
-            case [directive, *_] if directive.startswith('@'):
-                raise ValueError(f'unknown directive: {line}')
-            case _ if bpm_value is not None:
-                *closed, pending = (pending + line).split(bar_sep)
-                for beat in closed:
-                    close_beat(beat, number)
-            case _:
-                beat_seconds = 4 * note_delay
-                depth = 0
-                for bar in line.split(bar_sep):
-                    for token in LOOSE_TOKEN.findall(bar):
-                        match token:
-                            case '{' | '【' | '[':
-                                depth += 1
-                            case '}' | '】' | ']':
-                                depth = max(depth - 1, 0)
-                            case ' ':
-                                now += space_delay / beat_seconds
-                            case _:
-                                press(token, now)
-                                now += (note_delay / 2 if depth else note_delay) / beat_seconds
-                    if break_after and break_after.fullmatch(bar):
-                        now += space_delay / beat_seconds
+            match line.split(maxsplit=1):
+                case ['@clear']:
+                    notes.clear()
+                    tempos.clear()
+                    beats.clear()
+                    now = Fraction(0)
+                    set_tempo(now)
+                case ['@bar_sep', arg]:
+                    bar_sep = ast.literal_eval(arg)
+                case ['@break_after', arg]:
+                    if bpm is not None:
+                        raise ValueError(f'line {number}: @break_after after a tempo marker')
+                    break_after = re.compile(f'[{KEYS} ]{{{int(arg)}}}')
+                case ['@note_delay', arg]:
+                    note_delay, bpm = Fraction(arg), None
+                    set_tempo(now)
+                case ['@space_delay', arg]:
+                    space_delay, bpm = Fraction(arg), None
+                    set_tempo(now)
+                case _:
+                    raise ValueError(f'unknown directive: {line}')
+            continue
+        if bpm is None:
+            marker = TEMPO_MARKER.search(line)
+            split = marker.start() if marker else len(line)
+            read_timed(line[:split])
+            if not marker:
+                continue
+            line = line[split:]
+        *closed, pending = (pending + line).split(bar_sep)
+        for beat in closed:
+            close_beat(beat, number)
     close_pending(number)
 
     # A beat off the common slot count most likely lost spaces in the copy, which could have

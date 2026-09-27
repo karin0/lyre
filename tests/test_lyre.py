@@ -272,9 +272,9 @@ def test_loose_unknown_directive_is_rejected():
         lyre.read_loose('@break_if len(bar) == 4\n')
 
 
-def test_loose_beats_under_bpm_split_evenly_across_lines():
+def test_loose_beats_after_a_tempo_marker_split_evenly_across_lines():
     # A beat holding only a key on its first slot is a rest, whatever its slot count.
-    text = '@bpm 120\n(AQ) Q /T{QR}E/\n(NH)/G Q\nH/\n'
+    text = '<120>(AQ) Q /T{QR}E/\n(NH)/G Q\nH/\n'
     assert loose(text) == [
         (0, 'A'),
         (0, 'Q'),
@@ -293,16 +293,29 @@ def test_loose_beats_under_bpm_split_evenly_across_lines():
 
 
 def test_loose_beat_that_lost_spaces_is_rejected():
-    with pytest.raises(ValueError, match=r"line 4: '\(YZN\)C '"):
-        lyre.read_loose('@bpm 73\n(TZ) B /(EA)   /\n(YZN)\nC /N M /\n')
+    with pytest.raises(ValueError, match=r"line 3: '\(YZN\)C '"):
+        lyre.read_loose('<73>(TZ) B /(EA)   /\n(YZN)\nC /N M /\n')
+
+
+def test_loose_tempo_marker_changes_the_tempo_at_its_slot():
+    text = '<60>A <120>B /<90>  C /\n'
+    assert loose(text) == [(0, 'A'), (Fraction(1, 2), 'B'), (Fraction(3, 2), 'C')]
+    assert lyre.read_loose(text).tempos == ((0, 1_000_000), (240, 500_000), (TPB, 666_667))
 
 
 def test_loose_switches_between_beats_and_delays():
-    text = '@bpm 120\nA B /\n@note_delay 0.25\nCD\n'
-    assert loose(text) == [(0, 'A'), (Fraction(1, 2), 'B'), (1, 'C'), (Fraction(5, 4), 'D')]
-    assert lyre.read_loose(text).tempos == ((0, 500_000), (TPB, 1_000_000))
+    # At the default 100 BPM, a key takes a quarter of a beat.
+    text = 'AB<120>C /\n@note_delay 0.25\nDE\n'
+    assert loose(text) == [
+        (0, 'A'),
+        (Fraction(1, 4), 'B'),
+        (Fraction(1, 2), 'C'),
+        (Fraction(3, 2), 'D'),
+        (Fraction(7, 4), 'E'),
+    ]
+    assert lyre.read_loose(text).tempos == ((0, 600_000), (240, 500_000), (720, 1_000_000))
     with pytest.raises(ValueError, match='@break_after'):
-        lyre.read_loose('@bpm 120\n@break_after 4\n')
+        lyre.read_loose('<120>A/\n@break_after 4\n')
 
 
 def test_cli_converts_a_community_chart_to_its_timing(
