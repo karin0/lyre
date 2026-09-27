@@ -8,7 +8,6 @@ import re
 import time
 
 from collections.abc import Callable
-from fractions import Fraction
 from pathlib import Path
 
 import keyboard
@@ -16,7 +15,7 @@ import keyboard
 # Press and release in seconds from the start, and the key. A tap releases where it presses.
 type Note = tuple[float, float, str]
 
-HEADER = re.compile(r'([\d.]+) BPM, .* one slot = (\d+(?:/\d+)?) note')
+HEADER = re.compile(r'([\d.]+) BPM, \d+/(\d+)')
 TOKEN = re.compile(r'<([\d.]+)>|\(([A-Za-z]+)\)|([A-Za-z ])')
 LOOSE_TOKEN = re.compile(r'\([A-Z]+\)|[A-Z]| |[{【\[]|[}】\]]')
 NOTE_DELAY = 0.15
@@ -29,30 +28,33 @@ QUIT = '`'
 def parse_chart(text: str) -> tuple[Note, ...]:
     '''Time the notes of a chart written by lyre.py from its header tempo and tempo markers.
 
-    A lowercase key releases the key pressed before it, and a key pressed with no release
-    before its next press is a tap.
+    Each beat is split evenly among its slots. A lowercase key releases the key pressed
+    before it, and a key pressed with no release before its next press is a tap.
     '''
     header = HEADER.search(text)
     if header is None:
         raise ValueError('chart has no tempo line')
-    slot_note = float(Fraction(header[2]))
-    slot = 240 / float(header[1]) * slot_note
+    quarters_per_beat = 4 / int(header[2])
+    bpm = float(header[1])
     now = 0.0
     notes: list[Note] = []
     held: dict[str, int] = {}  # key -> index of its latest press in notes
-    for bpm, chord, single in TOKEN.findall(text.split('```')[1].replace('\n', '')):
-        if bpm:
-            slot = 240 / float(bpm) * slot_note
-            continue
-        for key in chord or single.strip():
-            if key.isupper():
-                held[key] = len(notes)
-                notes.append((now, now, key))
-            elif (i := held.pop(key.upper(), None)) is not None:
-                notes[i] = (notes[i][0], now, key.upper())
-            else:
-                raise ValueError(f'{key.upper()} released without a press')
-        now += slot
+    for beat in text.split('```')[1].replace('\n', '').split('/'):
+        tokens = TOKEN.findall(beat)
+        slots = sum(1 for marker, _, _ in tokens if not marker)
+        for marker, chord, single in tokens:
+            if marker:
+                bpm = float(marker)
+                continue
+            for key in chord or single.strip():
+                if key.isupper():
+                    held[key] = len(notes)
+                    notes.append((now, now, key))
+                elif (i := held.pop(key.upper(), None)) is not None:
+                    notes[i] = (notes[i][0], now, key.upper())
+                else:
+                    raise ValueError(f'{key.upper()} released without a press')
+            now += 60 / bpm * quarters_per_beat / slots
     return tuple(notes)
 
 

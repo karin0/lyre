@@ -1,3 +1,4 @@
+from fractions import Fraction
 from pathlib import Path
 
 import mido
@@ -15,6 +16,20 @@ def song(notes: tuple[Note, ...], tempos: tuple[tuple[int, int], ...] = ((0, 500
 
 def tap(tick: int, pitch: int) -> Note:
     return Note(tick, pitch, tick + TPB // 4)
+
+
+def chart(
+    events: tuple[tuple[Fraction | int, tuple[tuple[int, Fraction | int], ...]], ...],
+    tempos: tuple[tuple[Fraction | int, int], ...] = ((0, 500_000),),
+) -> Chart:
+    return Chart(
+        tuple((Fraction(at), tuple((p, Fraction(n)) for p, n in keys)) for at, keys in events),
+        tuple((Fraction(at), tempo) for at, tempo in tempos),
+        TPB,
+        4,
+        0,
+        song(()),
+    )
 
 
 def test_key_map_covers_white_keys_c3_to_b5():
@@ -45,23 +60,21 @@ def test_accidental_takes_the_consonant_neighbour():
 
 
 def test_grid_is_the_coarsest_that_fits_every_onset():
-    assert lyre.choose_slot((0, 240, 480), TPB, TPB // 32) == 240
-    assert lyre.choose_slot((0, 120, 480), TPB, TPB // 32) == 120
-    assert lyre.choose_slot((0, 160, 320), TPB, TPB // 32) == 160
+    assert lyre.choose_division((0, 240), TPB, TPB // 32) == 2
+    assert lyre.choose_division((0, 120), TPB, TPB // 32) == 4
+    assert lyre.choose_division((0, 160, 320), TPB, TPB // 32) == 3
+    assert lyre.choose_division((5, 470), TPB, TPB // 32) == 1
 
 
-def test_render_groups_beats_and_bars():
-    chart = lyre.arrange(song((tap(0, 60), tap(0, 64), tap(240, 67), tap(4 * TPB, 72))))
-    body = lyre.render(chart, 't').split('```\n')[1]
-    assert body == '(AD)G/  /  /  /\nQ /  /  /  /\n'
+def test_each_beat_gets_its_own_grid():
+    notes = (tap(0, 60), tap(0, 64), tap(240, 67), tap(TPB + 160, 65), tap(4 * TPB, 72))
+    body = lyre.render(lyre.arrange(song(notes)), 't').split('```\n')[1]
+    assert body == '(AD)G/ F / / /\nQ/ / / /\n'
 
 
 def test_preview_midi_matches_chart(tmp_path: Path):
-    chart = Chart(
-        ((0, ((60, 0), (64, 3))), (1, ((60, 0),)), (4, ((72, 0),))), TPB, 1, 4, 0, song(())
-    )
     path = tmp_path / 'out.mid'
-    lyre.write_midi(chart, path)
+    lyre.write_midi(chart(((0, ((60, 0), (64, 3))), (1, ((60, 0),)), (4, ((72, 0),)))), path)
     tick = 0
     starts: list[tuple[int, int]] = []
     ends: dict[int, list[int]] = {}
@@ -173,9 +186,9 @@ def test_hold_keeps_keys_down_until_the_note_ends_or_the_key_repeats():
         Note(0, 60, 2 * TPB),
         Note(0, 72, 4 * TPB),
         Note(TPB, 72, 3 * TPB),
-        Note(TPB, 64, TPB + 60),
+        Note(TPB, 64, TPB + 10),
     )
-    # One slot per beat: C4 holds two slots, C5 is cut by its repeat, and E4 is shorter than a slot.
+    # C4 holds two beats, C5 is cut by its repeat, and E4 ends within the grid tolerance.
     assert lyre.arrange(song(notes), hold=True).events == (
         (0, ((60, 2), (72, 1))),
         (1, ((64, 0), (72, 2))),
@@ -184,8 +197,7 @@ def test_hold_keeps_keys_down_until_the_note_ends_or_the_key_repeats():
 
 
 def test_render_writes_releases_and_tempo_changes():
-    tempos = ((0, 500_000), (TPB, 500_000), (2 * TPB, 400_000))
-    chart = Chart(((0, ((60, 2), (72, 1))), (1, ((72, 0),))), TPB, 1, 4, 0, song((), tempos))
-    text = lyre.render(chart, 't')
-    assert text.split('```\n')[1] == '(AQ)/(qQ)/<150>a/ /\n'
+    tempos = ((0, 500_000), (1, 500_000), (Fraction(5, 2), 400_000))
+    text = lyre.render(chart(((0, ((60, 2), (72, 1))), (1, ((72, 0),))), tempos), 't')
+    assert text.split('```\n')[1] == '(AQ)/(qQ)/a<150> / /\n'
     assert text.split('\n')[2].startswith('120 BPM,')
