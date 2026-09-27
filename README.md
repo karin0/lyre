@@ -57,7 +57,7 @@ Only the first time signature is used for bar lines.
 
 ## Community charts
 
-An input without a `.mid` or `.midi` suffix is a chart copied from the community, which has no durations. Each line is stripped, and only parenthesized chords, capital letters and spaces count, so headings, dashes and other text in the copy are ignored, and `#` starts a comment. A key or chord takes 0.15 s, a space 0.1 s. Keys inside `{}`, `【】` or `[]` take half the key time, on the guess that they mark a fast run or an arpeggio. A key becomes a sixteenth note, so the chart gets the tempo at which four keys fill a beat, 100 BPM by default. Lines starting with `@` are directives:
+An input without a `.mid` or `.midi` suffix is a chart copied from the community, which has no durations. Each line is stripped, and only the capital letters of the 21 keys, chords of them in parentheses and spaces count, so headings, dashes and other text in the copy are ignored, and `#` starts a comment. A key or chord takes 0.15 s, a space 0.1 s. Keys inside `{}`, `【】` or `[]` take half the key time, on the guess that they mark a fast run or an arpeggio. A key becomes a sixteenth note, so the chart gets the tempo at which four keys fill a beat, 100 BPM by default. Lines starting with `@` are directives:
 
 - `@note_delay S` and `@space_delay S` set the time of a key and a space in seconds.
 - `@bpm N` reads the lines after it as beats at N BPM. Each separator closes a beat, which splits evenly among its keys, chords and spaces, and brackets change nothing. `@note_delay` or `@space_delay` returns to fixed times.

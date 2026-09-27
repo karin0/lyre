@@ -29,8 +29,9 @@ LYRE_PROGRAM = 46  # General MIDI orchestral harp, the closest timbre to the lyr
 BARS_PER_PARAGRAPH = 4
 MIDI_SUFFIXES = ('.mid', '.midi')
 
-LOOSE_TOKEN = re.compile(r'\([A-Z]+\)|[A-Z]| |[{【\[]|[}】\]]')
-SLOT = re.compile(r'\([A-Z]+\)|[A-Z]| ')
+SLOT_PATTERN = rf'\([{KEYS}]+\)|[{KEYS}]| '
+LOOSE_TOKEN = re.compile(rf'{SLOT_PATTERN}|[{{【\[]|[}}】\]]')
+SLOT = re.compile(SLOT_PATTERN)
 NOTE_DELAY = Fraction('0.15')
 SPACE_DELAY = Fraction('0.1')
 LOOSE_TICKS_PER_BEAT = 480
