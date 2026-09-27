@@ -32,11 +32,27 @@ class Note:
 
 
 @dataclass(frozen=True)
-class Song:
+class Part:
+    '''The pitched notes of one channel in one track.'''
+
+    name: str
+    channel: int
+    program: int | None
     notes: tuple[Note, ...]
+
+
+@dataclass(frozen=True)
+class Song:
+    parts: tuple[Part, ...]
     ticks_per_beat: int
     tempos: tuple[tuple[int, int], ...]  # (tick, microseconds per quarter note), from tick 0
     time_signature: tuple[int, int]
+
+    @property
+    def notes(self) -> tuple[Note, ...]:
+        return tuple(
+            sorted((n for p in self.parts for n in p.notes), key=lambda n: (n.tick, n.pitch))
+        )
 
 
 # A pitch and the slots its key stays down, 0 for a tap.
@@ -55,11 +71,13 @@ class Chart:
 
 def read_midi(path: Path) -> Song:
     midi = mido.MidiFile(path)
-    notes: list[Note] = []
+    parts: list[Part] = []
     tempos: list[tuple[int, int]] = []
     signatures: list[tuple[int, tuple[int, int]]] = []
     for track in midi.tracks:
         tick = 0
+        notes: dict[int, list[Note]] = {}  # channel -> notes
+        programs: dict[int, int] = {}
         sounding: dict[tuple[int, int], list[int]] = {}  # (channel, pitch) -> onsets
         for msg in track:
             tick += msg.time
@@ -71,19 +89,26 @@ def read_midi(path: Path) -> Song:
                 case mido.Message(type='note_on' | 'note_off', channel=c, note=pitch) if (
                     sounding.get((c, pitch))
                 ):
-                    notes.append(Note(sounding[c, pitch].pop(0), pitch, tick))
+                    notes.setdefault(c, []).append(Note(sounding[c, pitch].pop(0), pitch, tick))
+                case mido.Message(type='program_change', channel=c, program=program):
+                    programs[c] = program
                 case mido.MetaMessage(type='set_tempo', tempo=tempo):
                     tempos.append((tick, tempo))
                 case mido.MetaMessage(type='time_signature', numerator=n, denominator=d):
                     signatures.append((tick, (n, d)))
                 case _:
                     pass
-        notes.extend(Note(t, pitch, tick) for (_, pitch), ts in sounding.items() for t in ts)
+        for (c, pitch), ts in sounding.items():
+            notes.setdefault(c, []).extend(Note(t, pitch, tick) for t in ts)
+        parts.extend(
+            Part(track.name, c, programs.get(c), tuple(sorted(notes[c], key=lambda n: n.tick)))
+            for c in sorted(notes)
+        )
     tempos.sort(key=lambda t: t[0])
     if not tempos or tempos[0][0] > 0:
         tempos.insert(0, (0, 500_000))  # The MIDI default of 120 BPM.
     return Song(
-        notes=tuple(sorted(notes, key=lambda n: (n.tick, n.pitch))),
+        parts=tuple(parts),
         ticks_per_beat=midi.ticks_per_beat,
         tempos=tuple(tempos),
         time_signature=min(signatures)[1] if signatures else (4, 4),
@@ -294,9 +319,27 @@ def write_midi(chart: Chart, path: Path) -> None:
     midi.save(path)
 
 
-def default_chart_path(source: Path, max_keys: int | None, horn: bool, hold: bool) -> Path:
+PITCH_NAMES = ('C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B')
+
+
+def pitch_name(pitch: int) -> str:
+    return f'{PITCH_NAMES[pitch % 12]}{pitch // 12 - 1}'
+
+
+def describe(index: int, part: Part) -> str:
+    pitches = [n.pitch for n in part.notes]
+    program = '' if part.program is None else f', program {part.program}'
+    return (
+        f'{index}: {part.name or '(unnamed)'}, channel {part.channel}{program}, '
+        f'{len(pitches)} notes, {pitch_name(min(pitches))} to {pitch_name(max(pitches))}'
+    )
+
+
+def default_chart_path(
+    source: Path, max_keys: int | None, horn: bool, hold: bool, parts: tuple[int, ...] | None
+) -> Path:
     tags = ('.horn' if horn else '') + (f'.max{max_keys}' if max_keys else '')
-    tags += '.hold' if hold else ''
+    tags += ('.hold' if hold else '') + (f'.parts{'+'.join(map(str, parts))}' if parts else '')
     return source.with_suffix(f'{tags}.txt')
 
 
@@ -313,12 +356,31 @@ def main() -> None:
     parser.add_argument(
         '--hold', action='store_true', help='hold keys for the note durations, for sustaining'
     )
+    parser.add_argument(
+        '--parts',
+        type=int,
+        nargs='+',
+        metavar='N',
+        help='arrange only these parts, see --list-parts',
+    )
+    parser.add_argument(
+        '--list-parts', action='store_true', help='list the parts of the input and exit'
+    )
     args = parser.parse_args()
     source: Path = args.midi
+    song = read_midi(source)
+    if args.list_parts:
+        print('\n'.join(describe(i, p) for i, p in enumerate(song.parts)))
+        return
+    parts: tuple[int, ...] | None = args.parts and tuple(sorted(set(args.parts)))
+    if parts:
+        if parts[-1] >= len(song.parts) or parts[0] < 0:
+            parser.error(f'the input has parts 0 to {len(song.parts) - 1}')
+        song = replace(song, parts=tuple(song.parts[i] for i in parts))
     lowest = HORN_LOWEST if args.horn else LOWEST
-    chart = arrange(read_midi(source), args.max_keys, lowest, hold=args.hold)
+    chart = arrange(song, args.max_keys, lowest, hold=args.hold)
     chart_path: Path = args.output or default_chart_path(
-        source, args.max_keys, args.horn, args.hold
+        source, args.max_keys, args.horn, args.hold, parts
     )
     preview_path = chart_path.with_suffix('.lyre.mid')
     chart_path.write_text(render(chart, source.stem), encoding='utf-8')

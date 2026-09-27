@@ -6,6 +6,8 @@
 uv run lyre.py song.mid                             # writes song.txt and song.lyre.mid
 uv run lyre.py song.mid --horn --max-keys 2 --hold  # writes song.horn.max2.hold.txt and song.horn.max2.hold.lyre.mid
 uv run lyre.py song.mid --max-keys 2 -o easy.txt    # writes easy.txt and easy.lyre.mid
+uv run lyre.py song.mid --list-parts                # lists the parts to pick with --parts
+uv run lyre.py song.mid --parts 0 5                 # writes song.parts0+5.txt and song.parts0+5.lyre.mid
 uv run play.py song.txt                             # plays song.txt in the focused window
 ./check.sh                                          # ruff, pyright, pytest
 ```
@@ -32,7 +34,7 @@ presses C4 and C5 together and then C5 again, each held for a sixteenth note, th
 
 ## Conversion
 
-1. All non-drum notes are collected with their onsets and ends.
+1. Each channel of each track is a part, and channel 10 holds drums, which are left out. All notes of the parts chosen with `--parts`, or of every part by default, are collected with their onsets and ends.
 2. The whole song is shifted by the semitone count in -24..24 that leaves the fewest notes on black keys, then the fewest outside the range, preferring the smallest shift on remaining ties. Black keys weigh more because resolving one changes its pitch class, while an octave fold keeps it. A song that sits in one major key (or its relative minor) lands entirely on white keys this way.
 3. Notes still outside the range are folded by octaves into it. The range is C3 to B5, or C4 to B5 with `--horn`.
 4. Each note still on a black key moves one semitone down or up, whichever clashes less with the white-key notes whose onsets lie within one beat, weighted by time distance. The interval roughness table is `ROUGHNESS` in `lyre.py`.

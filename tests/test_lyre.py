@@ -4,13 +4,13 @@ import mido
 
 import lyre
 
-from lyre import Chart, Note, Song
+from lyre import Chart, Note, Part, Song
 
 TPB = 480
 
 
 def song(notes: tuple[Note, ...], tempos: tuple[tuple[int, int], ...] = ((0, 500_000),)) -> Song:
-    return Song(notes, TPB, tempos, (4, 4))
+    return Song((Part('', 0, None, notes),), TPB, tempos, (4, 4))
 
 
 def tap(tick: int, pitch: int) -> Note:
@@ -113,8 +113,10 @@ def test_horn_keeps_every_key_on_the_upper_rows():
 
 def test_default_chart_path_names_the_options():
     source = Path('dir/song.mid')
-    assert lyre.default_chart_path(source, None, False, False) == Path('dir/song.txt')
-    assert lyre.default_chart_path(source, 2, True, True) == Path('dir/song.horn.max2.hold.txt')
+    assert lyre.default_chart_path(source, None, False, False, None) == Path('dir/song.txt')
+    assert lyre.default_chart_path(source, 2, True, True, (0, 6)) == Path(
+        'dir/song.horn.max2.hold.parts0+6.txt'
+    )
 
 
 def test_read_midi_pairs_note_ends_and_starts_at_the_default_tempo(tmp_path: Path):
@@ -139,6 +141,31 @@ def test_read_midi_pairs_note_ends_and_starts_at_the_default_tempo(tmp_path: Pat
         Note(2 * TPB, 67, 2 * TPB),
     )
     assert result.tempos == ((0, 500_000), (TPB, 400_000))
+
+
+def test_parts_split_tracks_and_channels_without_drums(tmp_path: Path):
+    midi = mido.MidiFile(ticks_per_beat=TPB)
+    midi.tracks.append(mido.MidiTrack([mido.Message('note_on', note=60, velocity=80)]))
+    midi.tracks.append(
+        mido.MidiTrack(
+            [
+                mido.MetaMessage('track_name', name='Band'),
+                mido.Message('program_change', channel=3, program=40),
+                mido.Message('note_on', channel=3, note=72, velocity=80),
+                mido.Message('note_on', channel=1, note=48, velocity=80),
+                mido.Message('note_on', channel=9, note=36, velocity=80),
+            ]
+        )
+    )
+    path = tmp_path / 'in.mid'
+    midi.save(path)
+    parts = lyre.read_midi(path).parts
+    assert [(p.name, p.channel, p.program) for p in parts] == [
+        ('', 0, None),
+        ('Band', 1, None),
+        ('Band', 3, 40),
+    ]
+    assert lyre.describe(2, parts[2]) == '2: Band, channel 3, program 40, 1 notes, C5 to C5'
 
 
 def test_hold_keeps_keys_down_until_the_note_ends_or_the_key_repeats():
