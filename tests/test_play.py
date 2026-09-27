@@ -99,10 +99,42 @@ def test_perform_releases_held_keys_when_stopped(monkeypatch: pytest.MonkeyPatch
 
     monkeypatch.setattr(play.keyboard, 'press', press)
     monkeypatch.setattr(play.keyboard, 'release', release)
-    play.perform(((0, 2, 'Q'), (1, 1, 'A')), lambda at: at < 1)
+    play.perform(((0, 2, 'Q'), (1, 1, 'A')), lambda at, _: at < 1)
     assert sent == [('q', True), ('q', False)]
 
 
 def test_loose_unknown_directive_is_rejected():
     with pytest.raises(ValueError, match='@break_if'):
         play.parse_loose('@break_if len(bar) == 4\n')
+
+
+def test_play_clock_stops_while_paused_and_the_pause_releases_held_keys(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    now = 0.0
+    sent: list[tuple[float, str, bool]] = []
+
+    def sleep(seconds: float) -> None:
+        nonlocal now
+        now += seconds
+
+    def press(key: str) -> None:
+        sent.append((now, key, True))
+
+    def release(key: str) -> None:
+        sent.append((now, key, False))
+
+    monkeypatch.setattr(play.time, 'monotonic', lambda: now)
+    monkeypatch.setattr(play.time, 'sleep', sleep)
+    monkeypatch.setattr(play.keyboard, 'press', press)
+    monkeypatch.setattr(play.keyboard, 'release', release)
+    # Paused from 1.5 s to 3.5 s, so the note at 1 s of play time sounds at 4 s, and Q held
+    # until 2 s of play time goes up at the pause.
+    play.play(((0, 2, 'Q'), (1, 1, 'A')), lambda: not 1.5 <= now < 3.5)
+    assert [(k, down) for _, k, down in sent] == [
+        ('q', True),
+        ('q', False),
+        ('a', True),
+        ('a', False),
+    ]
+    assert [t for t, _, _ in sent] == pytest.approx([play.START_DELAY, 1.5, 4, 4], abs=play.POLL)
