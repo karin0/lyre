@@ -2,6 +2,7 @@ from fractions import Fraction
 from pathlib import Path
 
 import mido
+import pytest
 
 import lyre
 
@@ -72,6 +73,16 @@ def test_each_beat_gets_its_own_grid():
     assert body == '(AD)G/ F / / /\nQ/ / / /\n'
 
 
+def test_human_chart_shares_one_grid_and_leaves_out_tempo_changes():
+    notes = (tap(0, 60), tap(0, 64), tap(240, 67), tap(TPB + 160, 65), tap(4 * TPB, 72))
+    chart = lyre.arrange(song(notes, ((0, 500_000), (TPB, 400_000))), uniform=True)
+    text = lyre.render(chart, 't', human=True)
+    assert text.split('\n')[2] == '120 BPM, 4/4, one slot = 1/24 note, transposed +0 semitones.'
+    assert (
+        text.split('```\n')[1] == '(AD)  G  /  F   /      /      /\nQ     /      /      /      /\n'
+    )
+
+
 def test_preview_midi_matches_chart(tmp_path: Path):
     path = tmp_path / 'out.mid'
     lyre.write_midi(chart(((0, ((60, 0), (64, 3))), (1, ((60, 0),)), (4, ((72, 0),)))), path)
@@ -126,9 +137,9 @@ def test_horn_keeps_every_key_on_the_upper_rows():
 
 def test_default_chart_path_names_the_options():
     source = Path('dir/song.mid')
-    assert lyre.default_chart_path(source, None, False, False, None) == Path('dir/song.txt')
-    assert lyre.default_chart_path(source, 2, True, True, (0, 6)) == Path(
-        'dir/song.horn.max2.hold.parts0+6.txt'
+    assert lyre.default_chart_path(source, None, False, False, None, False) == Path('dir/song.txt')
+    assert lyre.default_chart_path(source, 2, True, False, (0, 6), True) == Path(
+        'dir/song.horn.max2.parts0+6.human.txt'
     )
 
 
@@ -201,3 +212,18 @@ def test_render_writes_releases_and_tempo_changes():
     text = lyre.render(chart(((0, ((60, 2), (72, 1))), (1, ((72, 0),))), tempos), 't')
     assert text.split('```\n')[1] == '(AQ)/(qQ)/a<150> / /\n'
     assert text.split('\n')[2].startswith('120 BPM,')
+
+
+def test_cli_writes_the_preview_only_with_midi(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    midi = mido.MidiFile(ticks_per_beat=TPB)
+    midi.tracks.append(mido.MidiTrack([mido.Message('note_on', note=60, velocity=80)]))
+    midi.save(tmp_path / 'in.mid')
+    for argv in (['in.mid', '--human'], ['in.mid', '--midi']):
+        monkeypatch.setattr('sys.argv', ['lyre.py', str(tmp_path / argv[0]), *argv[1:]])
+        lyre.main()
+    assert sorted(p.name for p in tmp_path.iterdir()) == [
+        'in.human.txt',
+        'in.lyre.mid',
+        'in.mid',
+        'in.txt',
+    ]
