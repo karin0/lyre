@@ -75,5 +75,3 @@ The preview MIDI written with `--midi` is named after the chart, such as `song.h
 ## Playing
 
 `play.py` sends key presses to the focused window. The game runs on Windows and only accepts them from a process with administrator rights. The keys of a chord go down together. The song plays while Scroll Lock is on and pauses while it is off, and it starts one second of playing time after launch to leave time to switch to the game. A pause releases the held keys, and they stay up after it. A song played to its end turns Scroll Lock off, so the next song waits for it. With `-k`, each press of `K`, `,` or space sends the next key or chord together with the releases before it, rests are skipped, `` ` `` quits, and Scroll Lock has no effect. The releases after the last press need one more trigger. Keys still down are released when playing stops.
-
-Open design questions are recorded under `docs/`.
