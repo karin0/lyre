@@ -8,8 +8,15 @@ class Message:
     channel: int
     note: int
     velocity: int
+    program: int
     def __init__(
-        self, type: str, *, note: int = ..., velocity: int = ..., program: int = ...
+        self,
+        type: str,
+        *,
+        channel: int = ...,
+        note: int = ...,
+        velocity: int = ...,
+        program: int = ...,
     ) -> None: ...
     def copy(self, *, time: int) -> Self: ...
 
@@ -19,12 +26,20 @@ class MetaMessage:
     tempo: int
     numerator: int
     denominator: int
+    name: str
     def __init__(
-        self, type: str, *, tempo: int = ..., numerator: int = ..., denominator: int = ...
+        self,
+        type: str,
+        *,
+        tempo: int = ...,
+        numerator: int = ...,
+        denominator: int = ...,
+        name: str = ...,
     ) -> None: ...
     def copy(self, *, time: int) -> Self: ...
 
-class MidiTrack(list[Message | MetaMessage]): ...
+class MidiTrack(list[Message | MetaMessage]):
+    name: str
 
 class MidiFile:
     ticks_per_beat: int
