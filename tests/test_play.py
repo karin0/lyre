@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 
 import lyre
@@ -138,3 +140,29 @@ def test_play_clock_stops_while_paused_and_the_pause_releases_held_keys(
         ('a', False),
     ]
     assert [t for t, _, _ in sent] == pytest.approx([play.START_DELAY, 1.5, 4, 4], abs=play.POLL)
+
+
+def test_song_played_to_its_end_turns_scroll_lock_off(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    chart = tmp_path / 'song.txt'
+    chart.write_text('120 BPM, 4/4, transposed +0 semitones.\n```\nA/\n```\n', encoding='utf-8')
+    now = 0.0
+    toggled: list[float] = []
+
+    def sleep(seconds: float) -> None:
+        nonlocal now
+        now += seconds
+
+    def ignore(_: str) -> None:
+        pass
+
+    monkeypatch.setattr('sys.argv', ['play.py', str(chart)])
+    monkeypatch.setattr(play, 'scroll_lock', lambda: True)
+    monkeypatch.setattr(play.time, 'monotonic', lambda: now)
+    monkeypatch.setattr(play.time, 'sleep', sleep)
+    monkeypatch.setattr(play.keyboard, 'press', ignore)
+    monkeypatch.setattr(play.keyboard, 'release', ignore)
+    monkeypatch.setattr(play, 'toggle_scroll_lock', lambda: toggled.append(now))
+    play.main()
+    assert toggled == [pytest.approx(play.START_DELAY)]

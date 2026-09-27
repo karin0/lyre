@@ -26,6 +26,8 @@ POLL = 0.02
 TRIGGERS = frozenset(('k', ',', 'space'))
 QUIT = '`'
 VK_SCROLL = 0x91
+SCROLL_SCAN = 0x46
+KEYEVENTF_KEYUP = 0x2
 
 
 def parse_chart(text: str) -> tuple[Note, ...]:
@@ -158,6 +160,13 @@ def scroll_lock() -> bool:
     return bool(ctypes.windll.user32.GetKeyState(VK_SCROLL) & 1)
 
 
+def toggle_scroll_lock() -> None:
+    # keyboard.send('scroll lock') sends the extended scan code 0xE046 first, which is Ctrl+Break.
+    user32 = ctypes.windll.user32
+    user32.keybd_event(VK_SCROLL, SCROLL_SCAN, 0, 0)
+    user32.keybd_event(VK_SCROLL, SCROLL_SCAN, KEYEVENTF_KEYUP, 0)
+
+
 def play(notes: tuple[Note, ...], playing: Callable[[], bool]) -> None:
     '''Send the notes on a clock that runs while `playing` holds, from START_DELAY before 0.
 
@@ -232,6 +241,8 @@ def main() -> None:
         step(notes)
     else:
         play(notes, scroll_lock)
+        if scroll_lock():
+            toggle_scroll_lock()
 
 
 if __name__ == '__main__':
