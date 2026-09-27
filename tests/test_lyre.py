@@ -240,7 +240,7 @@ def loose(text: str) -> list[tuple[Fraction, str]]:
 
 def test_loose_key_is_a_sixteenth_at_the_tempo_of_its_delay():
     # 0.15 s per key makes a beat 0.6 s, and a space of 0.1 s is 1/6 beat.
-    assert loose('第一段——————\n(AD) G/H  # 作者\n') == [
+    assert loose('第一段OIL——————\n(AD) G/H  # 作者\n') == [
         (0, 'A'),
         (0, 'D'),
         (Fraction(5, 12), 'G'),
