@@ -102,3 +102,9 @@ def test_horn_keeps_every_key_on_the_upper_rows():
     notes = (Note(0, 43), Note(0, 67), Note(TPB, 50))
     chart = lyre.arrange(song(notes), lowest=lyre.HORN_LOWEST)
     assert all(p >= lyre.HORN_LOWEST for _, pitches in chart.events for p in pitches)
+
+
+def test_default_chart_path_names_the_options():
+    source = Path('dir/song.mid')
+    assert lyre.default_chart_path(source, None, False) == Path('dir/song.txt')
+    assert lyre.default_chart_path(source, 2, True) == Path('dir/song.horn.max2.txt')

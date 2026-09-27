@@ -242,11 +242,16 @@ def write_midi(chart: Chart, path: Path) -> None:
     midi.save(path)
 
 
+def default_chart_path(source: Path, max_keys: int | None, horn: bool) -> Path:
+    tags = ('.horn' if horn else '') + (f'.max{max_keys}' if max_keys else '')
+    return source.with_suffix(f'{tags}.txt')
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('midi', type=Path)
     parser.add_argument(
-        '-o', '--output', type=Path, help='chart path, default: the input with suffix .txt'
+        '-o', '--output', type=Path, help='chart path, default: named after the input and options'
     )
     parser.add_argument(
         '--max-keys', type=int, choices=range(1, 22), metavar='N', help='keys pressed at once'
@@ -256,7 +261,7 @@ def main() -> None:
     source: Path = args.midi
     lowest = HORN_LOWEST if args.horn else LOWEST
     chart = arrange(read_midi(source), args.max_keys, lowest)
-    chart_path: Path = args.output or source.with_suffix('.txt')
+    chart_path: Path = args.output or default_chart_path(source, args.max_keys, args.horn)
     preview_path = chart_path.with_suffix('.lyre.mid')
     chart_path.write_text(render(chart, source.stem), encoding='utf-8')
     write_midi(chart, preview_path)

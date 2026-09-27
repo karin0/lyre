@@ -4,6 +4,7 @@
 
 ```sh
 uv run lyre.py song.mid                           # writes song.txt and song.lyre.mid
+uv run lyre.py song.mid --horn --max-keys 2       # writes song.horn.max2.txt and song.horn.max2.lyre.mid
 uv run lyre.py song.mid --max-keys 2 -o easy.txt  # writes easy.txt and easy.lyre.mid
 uv run play.py song.txt                           # plays song.txt in the focused window
 ./check.sh                                        # ruff, pyright, pytest
