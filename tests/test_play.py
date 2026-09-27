@@ -121,7 +121,7 @@ def test_play_clock_stops_while_paused_and_the_pause_releases_held_keys(
 def test_song_played_to_its_end_turns_scroll_lock_off(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    chart = tmp_path / 'song.txt'
+    chart = tmp_path / 'song.md'
     chart.write_text('120 BPM, 4/4, transposed +0 semitones.\n```\nA/\n```\n', encoding='utf-8')
     now = 0.0
     toggled: list[float] = []

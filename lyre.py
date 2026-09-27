@@ -521,7 +521,7 @@ def default_chart_path(
 ) -> Path:
     tags = ('.horn' if horn else '') + (f'.max{max_keys}' if max_keys else '')
     tags += ('.hold' if hold else '') + (f'.parts{'+'.join(map(str, parts))}' if parts else '')
-    return source.with_suffix(tags + ('.human' if human else '') + '.txt')
+    return source.with_suffix(tags + ('.human' if human else '') + '.md')
 
 
 def main() -> None:

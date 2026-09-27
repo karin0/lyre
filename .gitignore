@@ -5,7 +5,8 @@ __pycache__/
 
 # Songs and their generated charts and previews.
 *.mid
-*.txt
+/*.md
+!/README.md
 
 # Local charts and community transcriptions.
 /old/
