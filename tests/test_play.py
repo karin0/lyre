@@ -3,7 +3,7 @@ import pytest
 import lyre
 import play
 
-from lyre import Chart, Song
+from lyre import Note, Part, Song
 
 
 def check(notes: tuple[play.Note, ...], expected: tuple[tuple[float, str], ...]) -> None:
@@ -13,25 +13,43 @@ def check(notes: tuple[play.Note, ...], expected: tuple[tuple[float, str], ...])
     assert [t for t, _, _ in notes] == pytest.approx([t for t, _ in expected])
 
 
+def rendered(notes: tuple[Note, ...], tempos: tuple[tuple[int, int], ...], hold: bool) -> str:
+    song = Song((Part('', 0, None, notes),), 480, tempos, (4, 4))
+    return lyre.render(lyre.arrange(song, hold=hold), 'song')
+
+
 def test_chart_presses_follow_the_tempo_line():
-    song = Song((), 480, ((0, 500_000),), (4, 4))
-    chart = Chart(((0, ((60, 0), (72, 0))), (1, ((72, 0),)), (17, ((79, 0),))), 120, 4, 4, 0, song)
-    notes = play.parse_chart(lyre.render(chart, 'song'))
-    # 120 BPM with a sixteenth-note slot is 0.125 s per slot.
-    assert notes == ((0, 0, 'A'), (0, 0, 'Q'), (0.125, 0.125, 'Q'), (2.125, 2.125, 'T'))
+    notes = (Note(0, 60, 1), Note(0, 72, 1), Note(120, 72, 121), Note(2040, 79, 2041))
+    # 120 BPM is 0.5 s per beat, so a sixteenth note is 0.125 s.
+    assert play.parse_chart(rendered(notes, ((0, 500_000),), hold=False)) == (
+        (0, 0, 'A'),
+        (0, 0, 'Q'),
+        (0.125, 0.125, 'Q'),
+        (2.125, 2.125, 'T'),
+    )
 
 
 def test_chart_holds_and_tempo_changes_survive_rendering():
-    song = Song((), 480, ((0, 500_000), (960, 250_000)), (4, 4))
-    chart = Chart(((0, ((60, 2), (72, 1))), (1, ((72, 0),)), (2, ((64, 0),))), 480, 1, 4, 0, song)
-    notes = play.parse_chart(lyre.render(chart, 'song'))
-    # A slot is 0.5 s at 120 BPM and 0.25 s from slot 2 at 240 BPM.
-    assert notes == ((0, 1, 'A'), (0, 0.5, 'Q'), (0.5, 0.5, 'Q'), (1, 1, 'D'))
+    notes = (Note(0, 60, 960), Note(0, 72, 480), Note(480, 72, 481), Note(960, 64, 1200))
+    # A beat is 0.5 s at 120 BPM and 0.25 s from beat 2 at 240 BPM.
+    assert play.parse_chart(rendered(notes, ((0, 500_000), (960, 250_000)), hold=True)) == (
+        (0, 1, 'A'),
+        (0, 0.5, 'Q'),
+        (0.5, 0.5, 'Q'),
+        (1, 1.125, 'D'),
+    )
+
+
+def test_each_beat_splits_evenly_among_its_slots():
+    check(
+        play.parse_chart('120 BPM, 4/4, transposed +0 semitones.\n```\nA/B C /GHJ/\n```\n'),
+        ((0, 'A'), (0.5, 'B'), (0.75, 'C'), (1, 'G'), (1 + 1 / 6, 'H'), (1 + 2 / 6, 'J')),
+    )
 
 
 def test_chart_release_without_press_is_rejected():
     with pytest.raises(ValueError, match='Q released'):
-        play.parse_chart('120 BPM, 4/4, one slot = 1/4 note\n```\nA q/\n```\n')
+        play.parse_chart('120 BPM, 4/4, transposed +0 semitones.\n```\nA q/\n```\n')
 
 
 def test_chart_without_tempo_line_is_rejected():

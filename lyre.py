@@ -1,6 +1,7 @@
 '''Convert a MIDI file into a key chart for the Genshin Impact Windsong Lyre.'''
 
 import argparse
+import math
 
 from dataclasses import dataclass, replace
 from fractions import Fraction
@@ -55,15 +56,17 @@ class Song:
         )
 
 
-# A pitch and the slots its key stays down, 0 for a tap.
-type Key = tuple[int, int]
+# A pitch and the beats its key stays down, 0 for a tap.
+type Key = tuple[int, Fraction]
 
 
 @dataclass(frozen=True)
 class Chart:
-    events: tuple[tuple[int, tuple[Key, ...]], ...]  # (slot, keys in ascending pitch)
-    slot_ticks: int
-    slots_per_beat: int
+    '''Times are in beats of the time signature, on the grid chosen for each beat.'''
+
+    events: tuple[tuple[Fraction, tuple[Key, ...]], ...]  # (time, keys in ascending pitch)
+    tempos: tuple[tuple[Fraction, int], ...]  # (time, microseconds per quarter note)
+    beat_ticks: int
     beats_per_bar: int
     transpose: int
     song: Song
@@ -171,13 +174,12 @@ def resolve(notes: tuple[Note, ...], window: int) -> tuple[Note, ...]:
     return tuple(resolved)
 
 
-def choose_slot(ticks: tuple[int, ...], beat: int, tolerance: int) -> int:
-    '''The coarsest beat subdivision that places every onset within `tolerance` of a slot.'''
-    slots = [beat // n for n in GRID_DIVISIONS if beat % n == 0]
-    for slot in slots:
-        if all(min(t % slot, slot - t % slot) <= tolerance for t in ticks):
-            return slot
-    return slots[-1]
+def choose_division(offsets: tuple[int, ...], beat: int, tolerance: int) -> int:
+    '''The coarsest beat subdivision that places every offset within `tolerance` of a slot.'''
+    for n in GRID_DIVISIONS:
+        if all(abs(o * n - round(Fraction(o * n, beat)) * beat) <= tolerance * n for o in offsets):
+            return n
+    return GRID_DIVISIONS[-1]
 
 
 def thin(pitches: tuple[int, ...], max_keys: int) -> tuple[int, ...]:
@@ -207,26 +209,37 @@ def arrange(
     transpose = choose_transpose(tuple(n.pitch for n in song.notes), lowest)
     notes = tuple(replace(n, pitch=fold(n.pitch + transpose, lowest)) for n in song.notes)
     notes = resolve(notes, beat)
-    slot = choose_slot(tuple(n.tick for n in notes), beat, tpb // 32)
-    chords: dict[int, dict[int, int]] = {}  # slot -> pitch -> latest end tick
+    offsets: dict[int, list[int]] = {}  # beat -> offsets in ticks of the onsets and releases
+    for tick in (
+        (n.tick for n in notes) if not hold else (t for n in notes for t in (n.tick, n.end))
+    ):
+        offsets.setdefault(tick // beat, []).append(tick % beat)
+    divisions = {b: choose_division(tuple(o), beat, tpb // 32) for b, o in offsets.items()}
+
+    def snap(tick: int) -> Fraction:
+        b, offset = divmod(tick, beat)
+        n = divisions.get(b, 1)
+        return b + Fraction(round(Fraction(offset * n, beat)), n)
+
+    chords: dict[Fraction, dict[int, int]] = {}  # time -> pitch -> latest end tick
     for n in notes:
-        ends = chords.setdefault(round(n.tick / slot), {})
+        ends = chords.setdefault(snap(n.tick), {})
         ends[n.pitch] = max(ends.get(n.pitch, n.end), n.end)
-    events: list[tuple[int, tuple[Key, ...]]] = []
-    next_press: dict[int, int] = {}
-    for s in sorted(chords, reverse=True):
-        ends = chords[s]
+    events: list[tuple[Fraction, tuple[Key, ...]]] = []
+    next_press: dict[int, Fraction] = {}
+    for at in sorted(chords, reverse=True):
+        ends = chords[at]
         keys: list[Key] = []
         for p in thin(tuple(sorted(ends)), max_keys or len(ends)):
-            release = round(ends[p] / slot)
+            release = snap(ends[p])
             release = min(release, next_press.get(p, release))
-            keys.append((p, max(release - s, 0) if hold else 0))
-            next_press[p] = s
-        events.append((s, tuple(keys)))
+            keys.append((p, max(release - at, Fraction(0)) if hold else Fraction(0)))
+            next_press[p] = at
+        events.append((at, tuple(keys)))
     return Chart(
         events=tuple(reversed(events)),
-        slot_ticks=slot,
-        slots_per_beat=beat // slot,
+        tempos=tuple((snap(tick), tempo) for tick, tempo in song.tempos),
+        beat_ticks=beat,
         beats_per_bar=numerator,
         transpose=transpose,
         song=song,
@@ -238,46 +251,49 @@ def bpm(tempo: int) -> str:
 
 
 def render(chart: Chart, title: str) -> str:
-    letters: dict[int, str] = {}
-    releases: dict[int, list[int]] = {}
-    for slot, keys in chart.events:
-        letters[slot] = ''.join(KEY_OF[p] for p, _ in keys)
+    '''Write each beat as the slots of its grid, the finest one its presses, releases and
+    tempo changes need.'''
+    presses: dict[Fraction, str] = {}
+    releases: dict[Fraction, list[int]] = {}
+    for at, keys in chart.events:
+        presses[at] = ''.join(KEY_OF[p] for p, _ in keys)
         for p, length in keys:
             if length:
-                releases.setdefault(slot + length, []).append(p)
-    tempos: dict[int, str] = {}
-    for tick, tempo in chart.song.tempos:
-        tempos[round(tick / chart.slot_ticks)] = bpm(tempo)
-    markers: dict[int, str] = {}
-    current = tempos[0]
-    for slot, value in sorted(tempos.items()):
-        if value != current:
-            markers[slot] = f'<{value}>'
+                releases.setdefault(at + length, []).append(p)
+    tempos = sorted(dict(chart.tempos).items())  # The last tempo at one time wins.
+    start = bpm(tempos[0][1])
+    markers: dict[Fraction, str] = {}
+    current = start
+    for at, tempo in tempos:
+        if (value := bpm(tempo)) != current:
+            markers[at] = f'<{value}>'
             current = value
+    beats: dict[int, list[Fraction]] = {}
+    for at in (*presses, *releases, *markers):
+        beats.setdefault(math.floor(at), []).append(at - math.floor(at))
 
-    def token(slot: int) -> str:
-        keys = ''.join(KEY_OF[p].lower() for p in sorted(releases.get(slot, ())))
-        keys += letters.get(slot, '')
-        return markers.get(slot, '') + (f'({keys})' if len(keys) > 1 else keys or ' ')
+    def cell(at: Fraction) -> str:
+        keys = ''.join(KEY_OF[p].lower() for p in sorted(releases.get(at, ())))
+        keys += presses.get(at, '')
+        return markers.get(at, '') + (f'({keys})' if len(keys) > 1 else keys or ' ')
 
-    bar_slots = chart.slots_per_beat * chart.beats_per_bar
-    bar_count = max((*letters, *releases), default=-1) // bar_slots + 1
+    def beat_text(b: int) -> str:
+        n = math.lcm(*(offset.denominator for offset in beats.get(b, ())))
+        return ''.join(cell(b + Fraction(k, n)) for k in range(n))
+
+    bar_count = max(beats, default=-1) // chart.beats_per_bar + 1
     lines: list[str] = []
     for bar in range(bar_count):
         if bar and bar % BARS_PER_PARAGRAPH == 0:
             lines.append('')
-        beats = (
-            ''.join(token(s) for s in range(b, b + chart.slots_per_beat))
-            for b in range(bar * bar_slots, (bar + 1) * bar_slots, chart.slots_per_beat)
-        )
-        lines.append(''.join(f'{b}/' for b in beats))
+        first = bar * chart.beats_per_bar
+        lines.append(''.join(f'{beat_text(b)}/' for b in range(first, first + chart.beats_per_bar)))
 
-    slot_note = Fraction(chart.slot_ticks, 4 * chart.song.ticks_per_beat)
     body = '\n'.join(lines)
     return (
         f'# {title}\n\n'
-        f'{tempos[0]} BPM, {chart.song.time_signature[0]}/{chart.song.time_signature[1]}, '
-        f'one slot = {slot_note} note, transposed {chart.transpose:+d} semitones.\n\n'
+        f'{start} BPM, {chart.song.time_signature[0]}/{chart.song.time_signature[1]}, '
+        f'transposed {chart.transpose:+d} semitones.\n\n'
         f'```\n{body}\n```\n'
     )
 
@@ -290,9 +306,11 @@ def write_midi(chart: Chart, path: Path) -> None:
     song = chart.song
     ring = song.ticks_per_beat
     starts: dict[int, list[tuple[int, int]]] = {}  # pitch -> (tick, held ticks)
-    for slot, keys in chart.events:
+    for at, keys in chart.events:
         for p, length in keys:
-            starts.setdefault(p, []).append((slot * chart.slot_ticks, length * chart.slot_ticks))
+            starts.setdefault(p, []).append(
+                (round(at * chart.beat_ticks), round(length * chart.beat_ticks))
+            )
 
     events: list[tuple[int, int, mido.Message | mido.MetaMessage]] = [
         (tick, 0, mido.MetaMessage('set_tempo', tempo=tempo)) for tick, tempo in song.tempos
