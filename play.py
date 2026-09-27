@@ -2,6 +2,7 @@
 
 import argparse
 import ast
+import ctypes
 import math
 import queue
 import re
@@ -21,8 +22,10 @@ LOOSE_TOKEN = re.compile(r'\([A-Z]+\)|[A-Z]| |[{【\[]|[}】\]]')
 NOTE_DELAY = 0.15
 SPACE_DELAY = 0.1
 START_DELAY = 1  # Time to switch to the game window.
+POLL = 0.02
 TRIGGERS = frozenset(('k', ',', 'space'))
 QUIT = '`'
+VK_SCROLL = 0x91
 
 
 def parse_chart(text: str) -> tuple[Note, ...]:
@@ -124,30 +127,57 @@ def timeline(notes: tuple[Note, ...]) -> list[tuple[float, int, str, bool]]:
     return sorted(actions)
 
 
-def perform(notes: tuple[Note, ...], wait: Callable[[float], bool]) -> None:
-    '''Send each key action once `wait` returns for its time, stopping when it returns False.'''
+def release(down: set[str]) -> None:
+    for key in down:
+        keyboard.release(key.lower())
+    down.clear()
+
+
+def perform(notes: tuple[Note, ...], wait: Callable[[float, set[str]], bool]) -> None:
+    '''Send each key action once `wait` returns for its time, stopping when it returns False.
+
+    `wait` receives the keys held down and may release them, and a later release of a key
+    that is up is skipped.
+    '''
     down: set[str] = set()
     try:
         for at, _, key, press in timeline(notes):
-            if not wait(at):
+            if not wait(at, down):
                 return
             if press:
                 keyboard.press(key.lower())
                 down.add(key)
-            else:
+            elif key in down:
                 keyboard.release(key.lower())
                 down.discard(key)
     finally:
-        for key in down:
-            keyboard.release(key.lower())
+        release(down)
 
 
-def play(notes: tuple[Note, ...]) -> None:
-    start = time.monotonic() + START_DELAY
+def scroll_lock() -> bool:
+    return bool(ctypes.windll.user32.GetKeyState(VK_SCROLL) & 1)
 
-    def wait(at: float) -> bool:
-        time.sleep(max(0, start + at - time.monotonic()))
-        return True
+
+def play(notes: tuple[Note, ...], playing: Callable[[], bool]) -> None:
+    '''Send the notes on a clock that runs while `playing` holds, from START_DELAY before 0.
+
+    A pause releases the held keys, and they stay up after it.
+    '''
+    clock = -START_DELAY
+    last = time.monotonic()
+
+    def wait(at: float, down: set[str]) -> bool:
+        nonlocal clock, last
+        while True:
+            now = time.monotonic()
+            if playing():
+                clock += now - last
+            else:
+                release(down)
+            last = now
+            if clock >= at:
+                return True
+            time.sleep(min(at - clock, POLL))
 
     perform(notes, wait)
 
@@ -173,7 +203,7 @@ def step(notes: tuple[Note, ...]) -> None:
     presses = iter(sorted({press for press, _, _ in notes}))
     reached = -math.inf
 
-    def wait(at: float) -> bool:
+    def wait(at: float, _: set[str]) -> bool:
         nonlocal reached
         while at > reached:
             while (name := downs.get()) not in TRIGGERS:
@@ -201,7 +231,7 @@ def main() -> None:
     if args.step:
         step(notes)
     else:
-        play(notes)
+        play(notes, scroll_lock)
 
 
 if __name__ == '__main__':

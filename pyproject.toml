@@ -55,6 +55,8 @@ quote-style = "preserve"
 [tool.pyright]
 typeCheckingMode = "strict"
 pythonVersion = "3.14"
+# play.py drives the game, which runs on Windows.
+pythonPlatform = "Windows"
 
 [tool.pytest]
 pythonpath = ["."]
