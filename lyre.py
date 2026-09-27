@@ -200,9 +200,15 @@ def thin(pitches: tuple[int, ...], max_keys: int) -> tuple[int, ...]:
 
 
 def arrange(
-    song: Song, max_keys: int | None = None, lowest: int = LOWEST, *, hold: bool = False
+    song: Song,
+    max_keys: int | None = None,
+    lowest: int = LOWEST,
+    *,
+    hold: bool = False,
+    uniform: bool = False,
 ) -> Chart:
-    '''With `hold`, a key stays down until its note ends or the key is pressed again.'''
+    '''With `hold`, a key stays down until its note ends or the key is pressed again.
+    With `uniform`, every beat shares one grid.'''
     tpb = song.ticks_per_beat
     numerator, denominator = song.time_signature
     beat = tpb * 4 // denominator
@@ -215,6 +221,9 @@ def arrange(
     ):
         offsets.setdefault(tick // beat, []).append(tick % beat)
     divisions = {b: choose_division(tuple(o), beat, tpb // 32) for b, o in offsets.items()}
+    if uniform:
+        every = tuple(o for beat_offsets in offsets.values() for o in beat_offsets)
+        divisions = dict.fromkeys(offsets, choose_division(every, beat, tpb // 32))
 
     def snap(tick: int) -> Fraction:
         b, offset = divmod(tick, beat)
@@ -250,9 +259,13 @@ def bpm(tempo: int) -> str:
     return f'{round(mido.tempo2bpm(tempo), 2):g}'
 
 
-def render(chart: Chart, title: str) -> str:
+def render(chart: Chart, title: str, *, human: bool = False) -> str:
     '''Write each beat as the slots of its grid, the finest one its presses, releases and
-    tempo changes need.'''
+    tempo changes need.
+
+    For a human, every beat has the slots of the finest grid in the song, and tempo changes
+    are left out.
+    '''
     presses: dict[Fraction, str] = {}
     releases: dict[Fraction, list[int]] = {}
     for at, keys in chart.events:
@@ -264,7 +277,7 @@ def render(chart: Chart, title: str) -> str:
     start = bpm(tempos[0][1])
     markers: dict[Fraction, str] = {}
     current = start
-    for at, tempo in tempos:
+    for at, tempo in tempos if not human else ():
         if (value := bpm(tempo)) != current:
             markers[at] = f'<{value}>'
             current = value
@@ -277,8 +290,10 @@ def render(chart: Chart, title: str) -> str:
         keys += presses.get(at, '')
         return markers.get(at, '') + (f'({keys})' if len(keys) > 1 else keys or ' ')
 
+    song_slots = math.lcm(*(offset.denominator for o in beats.values() for offset in o))
+
     def beat_text(b: int) -> str:
-        n = math.lcm(*(offset.denominator for offset in beats.get(b, ())))
+        n = song_slots if human else math.lcm(*(offset.denominator for offset in beats.get(b, ())))
         return ''.join(cell(b + Fraction(k, n)) for k in range(n))
 
     bar_count = max(beats, default=-1) // chart.beats_per_bar + 1
@@ -290,9 +305,11 @@ def render(chart: Chart, title: str) -> str:
         lines.append(''.join(f'{beat_text(b)}/' for b in range(first, first + chart.beats_per_bar)))
 
     body = '\n'.join(lines)
+    numerator, denominator = chart.song.time_signature
+    slot = f'one slot = {Fraction(1, song_slots * denominator)} note, ' if human else ''
     return (
         f'# {title}\n\n'
-        f'{start} BPM, {chart.song.time_signature[0]}/{chart.song.time_signature[1]}, '
+        f'{start} BPM, {numerator}/{denominator}, {slot}'
         f'transposed {chart.transpose:+d} semitones.\n\n'
         f'```\n{body}\n```\n'
     )
@@ -354,18 +371,29 @@ def describe(index: int, part: Part) -> str:
 
 
 def default_chart_path(
-    source: Path, max_keys: int | None, horn: bool, hold: bool, parts: tuple[int, ...] | None
+    source: Path,
+    max_keys: int | None,
+    horn: bool,
+    hold: bool,
+    parts: tuple[int, ...] | None,
+    human: bool,
 ) -> Path:
     tags = ('.horn' if horn else '') + (f'.max{max_keys}' if max_keys else '')
     tags += ('.hold' if hold else '') + (f'.parts{'+'.join(map(str, parts))}' if parts else '')
-    return source.with_suffix(f'{tags}.txt')
+    return source.with_suffix(tags + ('.human' if human else '') + '.txt')
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('midi', type=Path)
+    parser.add_argument('source', type=Path, metavar='midi')
     parser.add_argument(
         '-o', '--output', type=Path, help='chart path, default: named after the input and options'
+    )
+    parser.add_argument(
+        '--human', action='store_true', help='write a chart to read and play by hand'
+    )
+    parser.add_argument(
+        '--midi', action='store_true', help='also write a MIDI preview beside the chart'
     )
     parser.add_argument(
         '--max-keys', type=int, choices=range(1, 22), metavar='N', help='keys pressed at once'
@@ -385,7 +413,7 @@ def main() -> None:
         '--list-parts', action='store_true', help='list the parts of the input and exit'
     )
     args = parser.parse_args()
-    source: Path = args.midi
+    source: Path = args.source
     song = read_midi(source)
     if args.list_parts:
         print('\n'.join(describe(i, p) for i, p in enumerate(song.parts)))
@@ -395,15 +423,20 @@ def main() -> None:
         if parts[-1] >= len(song.parts) or parts[0] < 0:
             parser.error(f'the input has parts 0 to {len(song.parts) - 1}')
         song = replace(song, parts=tuple(song.parts[i] for i in parts))
+    human: bool = args.human
+    if human and args.hold:
+        parser.error('--hold does not apply to --human')
     lowest = HORN_LOWEST if args.horn else LOWEST
-    chart = arrange(song, args.max_keys, lowest, hold=args.hold)
+    chart = arrange(song, args.max_keys, lowest, hold=args.hold, uniform=human)
     chart_path: Path = args.output or default_chart_path(
-        source, args.max_keys, args.horn, args.hold, parts
+        source, args.max_keys, args.horn, args.hold, parts, human
     )
-    preview_path = chart_path.with_suffix('.lyre.mid')
-    chart_path.write_text(render(chart, source.stem), encoding='utf-8')
-    write_midi(chart, preview_path)
-    print(f'{chart_path}\n{preview_path}')
+    chart_path.write_text(render(chart, source.stem, human=human), encoding='utf-8')
+    print(chart_path)
+    if args.midi:
+        preview_path = chart_path.with_suffix('.lyre.mid')
+        write_midi(chart, preview_path)
+        print(preview_path)
 
 
 if __name__ == '__main__':
