@@ -1,8 +1,11 @@
-'''Convert a MIDI file into a key chart for the Genshin Impact Windsong Lyre.'''
+'''Convert a MIDI file or a community chart into a key chart for the Windsong Lyre.'''
 
 import argparse
+import ast
 import math
+import re
 
+from collections import Counter
 from dataclasses import dataclass, replace
 from fractions import Fraction
 from pathlib import Path
@@ -16,6 +19,7 @@ LOWEST = 48
 HIGHEST = 83
 HORN_LOWEST = 60  # C4; the horn has only the QWERTYU and ASDFGHJ rows.
 KEY_OF = {LOWEST + 12 * (i // 7) + WHITE[i % 7]: k for i, k in enumerate(KEYS)}
+PITCH_OF = {k: p for p, k in KEY_OF.items()}
 
 # Roughness of each interval class 0..6 (unison through tritone).
 ROUGHNESS = (0, 1, 0.5, 0.1, 0.1, 0.1, 0.8)
@@ -23,6 +27,13 @@ GRID_DIVISIONS = (1, 2, 3, 4, 6, 8, 12, 16)
 DRUM_CHANNEL = 9
 LYRE_PROGRAM = 46  # General MIDI orchestral harp, the closest timbre to the lyre.
 BARS_PER_PARAGRAPH = 4
+MIDI_SUFFIXES = ('.mid', '.midi')
+
+LOOSE_TOKEN = re.compile(r'\([A-Z]+\)|[A-Z]| |[{【\[]|[}】\]]')
+SLOT = re.compile(r'\([A-Z]+\)|[A-Z]| ')
+NOTE_DELAY = Fraction('0.15')
+SPACE_DELAY = Fraction('0.1')
+LOOSE_TICKS_PER_BEAT = 480
 
 
 @dataclass(frozen=True)
@@ -115,6 +126,124 @@ def read_midi(path: Path) -> Song:
         ticks_per_beat=midi.ticks_per_beat,
         tempos=tuple(tempos),
         time_signature=min(signatures)[1] if signatures else (4, 4),
+    )
+
+
+def read_loose(text: str) -> Song:
+    '''Read a community chart as one part of taps in 4/4.
+
+    With fixed delays, a key takes a sixteenth note at the tempo its delay implies. Under
+    `@bpm`, each separator closes a beat that splits evenly among its slots.
+    '''
+    tpb = LOOSE_TICKS_PER_BEAT
+    notes: list[Note] = []
+    tempos: list[tuple[int, int]] = []
+    beats: list[tuple[int, str, int, bool]] = []  # (line, text, slots, key after the first slot)
+    now = Fraction(0)  # In beats.
+    note_delay, space_delay = NOTE_DELAY, SPACE_DELAY
+    bpm_value: Fraction | None = None
+    bar_sep = '/'
+    break_after = None
+    pending = ''  # The unclosed beat under @bpm.
+
+    def press(token: str, at: Fraction) -> None:
+        tick = round(at * tpb)
+        notes.extend(Note(tick, PITCH_OF[k], tick) for k in token.strip('()'))
+
+    def set_tempo() -> None:
+        tempo = (
+            round(4 * note_delay * 1_000_000)
+            if bpm_value is None
+            else round(60_000_000 / bpm_value)
+        )
+        tick = round(now * tpb)
+        if tempos and tempos[-1][0] == tick:
+            tempos.pop()
+        if not tempos or tempos[-1][1] != tempo:
+            tempos.append((tick, tempo))
+
+    def close_beat(beat: str, line: int) -> None:
+        nonlocal now
+        slots = SLOT.findall(beat)
+        beats.append((line, beat, len(slots), any(s != ' ' for s in slots[1:])))
+        for i, slot in enumerate(slots):
+            if slot != ' ':
+                press(slot, now + Fraction(i, len(slots)))
+        now += 1
+
+    def close_pending(line: int) -> None:
+        nonlocal pending
+        if SLOT.search(pending):
+            close_beat(pending, line)
+        pending = ''
+
+    set_tempo()
+    number = 0
+    for number, raw in enumerate(text.splitlines(), 1):
+        line = raw.partition('#')[0].strip()
+        if not line:
+            continue
+        if line.startswith('@'):
+            close_pending(number)
+        match line.split(maxsplit=1):
+            case ['@clear']:
+                notes.clear()
+                tempos.clear()
+                beats.clear()
+                now = Fraction(0)
+                set_tempo()
+            case ['@bar_sep', arg]:
+                bar_sep = ast.literal_eval(arg)
+            case ['@break_after', arg]:
+                if bpm_value is not None:
+                    raise ValueError(f'line {number}: @break_after under @bpm')
+                break_after = re.compile(f'[A-Z ]{{{int(arg)}}}')
+            case ['@note_delay', arg]:
+                note_delay, bpm_value = Fraction(arg), None
+                set_tempo()
+            case ['@space_delay', arg]:
+                space_delay, bpm_value = Fraction(arg), None
+                set_tempo()
+            case ['@bpm', arg]:
+                bpm_value = Fraction(arg)
+                set_tempo()
+            case [directive, *_] if directive.startswith('@'):
+                raise ValueError(f'unknown directive: {line}')
+            case _ if bpm_value is not None:
+                *closed, pending = (pending + line).split(bar_sep)
+                for beat in closed:
+                    close_beat(beat, number)
+            case _:
+                beat_seconds = 4 * note_delay
+                depth = 0
+                for bar in line.split(bar_sep):
+                    for token in LOOSE_TOKEN.findall(bar):
+                        match token:
+                            case '{' | '【' | '[':
+                                depth += 1
+                            case '}' | '】' | ']':
+                                depth = max(depth - 1, 0)
+                            case ' ':
+                                now += space_delay / beat_seconds
+                            case _:
+                                press(token, now)
+                                now += (note_delay / 2 if depth else note_delay) / beat_seconds
+                    if break_after and break_after.fullmatch(bar):
+                        now += space_delay / beat_seconds
+    close_pending(number)
+
+    # A beat off the common slot count most likely lost spaces in the copy, which could have
+    # stood anywhere in it.
+    counts = Counter(slots for _, _, slots, _ in beats)
+    if counts:
+        grid = counts.most_common(1)[0][0]
+        if off := [f'line {n}: {t!r}' for n, t, slots, late in beats if slots != grid and late]:
+            raise ValueError(f'beats off the grid of {grid} slots: {'; '.join(off)}')
+    return Song(
+        parts=(Part('', 0, None, tuple(notes)),),
+        ticks_per_beat=tpb,
+        tempos=tuple(tempos),
+        time_signature=(4, 4),
     )
 
 
@@ -385,7 +514,7 @@ def default_chart_path(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('source', type=Path, metavar='midi')
+    parser.add_argument('source', type=Path, help='a MIDI file or a community chart')
     parser.add_argument(
         '-o', '--output', type=Path, help='chart path, default: named after the input and options'
     )
@@ -414,7 +543,11 @@ def main() -> None:
     )
     args = parser.parse_args()
     source: Path = args.source
-    song = read_midi(source)
+    song = (
+        read_midi(source)
+        if source.suffix.lower() in MIDI_SUFFIXES
+        else read_loose(source.read_text(encoding='utf-8'))
+    )
     if args.list_parts:
         print('\n'.join(describe(i, p) for i, p in enumerate(song.parts)))
         return
@@ -431,6 +564,8 @@ def main() -> None:
     chart_path: Path = args.output or default_chart_path(
         source, args.max_keys, args.horn, args.hold, parts, human
     )
+    if chart_path.resolve() == source.resolve():
+        parser.error('the chart would overwrite the input, pass -o')
     chart_path.write_text(render(chart, source.stem, human=human), encoding='utf-8')
     print(chart_path)
     if args.midi:

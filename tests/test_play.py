@@ -59,25 +59,6 @@ def test_chart_without_tempo_line_is_rejected():
         play.parse_chart('```\nA\n```\n')
 
 
-def test_loose_chart_ignores_text_and_times_rests():
-    check(
-        play.parse_loose('第一段——————\n(AD) G/H  # 作者\n'),
-        ((0, 'A'), (0, 'D'), (0.25, 'G'), (0.4, 'H')),
-    )
-
-
-def test_loose_directives():
-    text = "Z\n@clear\n@bar_sep ' '\n@break_after 2\n@note_delay 0.2\n@space_delay 0.5\nAS D\n"
-    check(play.parse_loose(text), ((0, 'A'), (0.2, 'S'), (0.9, 'D')))
-
-
-def test_loose_bracket_run_takes_half_delays():
-    check(
-        play.parse_loose('{AS}D 【(WX】]Q\n'),
-        ((0, 'A'), (0.075, 'S'), (0.15, 'D'), (0.4, 'W'), (0.475, 'X'), (0.55, 'Q')),
-    )
-
-
 def test_timeline_releases_held_keys_first_and_taps_last():
     notes = ((0, 1, 'Q'), (1, 1, 'Q'), (1, 1, 'A'))
     assert [(t, k, down) for t, _, k, down in play.timeline(notes)] == [
@@ -103,11 +84,6 @@ def test_perform_releases_held_keys_when_stopped(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(play.keyboard, 'release', release)
     play.perform(((0, 2, 'Q'), (1, 1, 'A')), lambda at, _: at < 1)
     assert sent == [('q', True), ('q', False)]
-
-
-def test_loose_unknown_directive_is_rejected():
-    with pytest.raises(ValueError, match='@break_if'):
-        play.parse_loose('@break_if len(bar) == 4\n')
 
 
 def test_play_clock_stops_while_paused_and_the_pause_releases_held_keys(

@@ -5,6 +5,7 @@ import mido
 import pytest
 
 import lyre
+import play
 
 from lyre import Chart, Note, Part, Song
 
@@ -227,3 +228,101 @@ def test_cli_writes_the_preview_only_with_midi(tmp_path: Path, monkeypatch: pyte
         'in.mid',
         'in.txt',
     ]
+
+
+def loose(text: str) -> list[tuple[Fraction, str]]:
+    '''Onsets in beats and keys of a community chart, which holds only taps.'''
+    song = lyre.read_loose(text)
+    tpb = song.ticks_per_beat
+    assert all(n.end == n.tick for n in song.notes)
+    return [(Fraction(n.tick, tpb), lyre.KEY_OF[n.pitch]) for n in song.notes]
+
+
+def test_loose_key_is_a_sixteenth_at_the_tempo_of_its_delay():
+    # 0.15 s per key makes a beat 0.6 s, and a space of 0.1 s is 1/6 beat.
+    assert loose('第一段——————\n(AD) G/H  # 作者\n') == [
+        (0, 'A'),
+        (0, 'D'),
+        (Fraction(5, 12), 'G'),
+        (Fraction(2, 3), 'H'),
+    ]
+    assert lyre.read_loose('A').tempos == ((0, 600_000),)
+
+
+def test_loose_directives():
+    text = "Z\n@clear\n@bar_sep ' '\n@break_after 2\n@note_delay 0.2\n@space_delay 0.5\nAS D\n"
+    # A beat of 0.8 s puts D at 0.9 s.
+    assert loose(text) == [(0, 'A'), (Fraction(1, 4), 'S'), (Fraction(9, 8), 'D')]
+    assert lyre.read_loose(text).tempos == ((0, 800_000),)
+
+
+def test_loose_bracket_run_takes_half_delays():
+    assert loose('{AS}D 【(WX】]Q\n') == [
+        (0, 'A'),
+        (Fraction(1, 8), 'S'),
+        (Fraction(1, 4), 'D'),
+        (Fraction(2, 3), 'W'),
+        (Fraction(19, 24), 'X'),
+        (Fraction(11, 12), 'Q'),
+    ]
+
+
+def test_loose_unknown_directive_is_rejected():
+    with pytest.raises(ValueError, match='@break_if'):
+        lyre.read_loose('@break_if len(bar) == 4\n')
+
+
+def test_loose_beats_under_bpm_split_evenly_across_lines():
+    # A beat holding only a key on its first slot is a rest, whatever its slot count.
+    text = '@bpm 120\n(AQ) Q /T{QR}E/\n(NH)/G Q\nH/\n'
+    assert loose(text) == [
+        (0, 'A'),
+        (0, 'Q'),
+        (Fraction(1, 2), 'Q'),
+        (1, 'T'),
+        (Fraction(5, 4), 'Q'),
+        (Fraction(3, 2), 'R'),
+        (Fraction(7, 4), 'E'),
+        (2, 'N'),
+        (2, 'H'),
+        (3, 'G'),
+        (Fraction(7, 2), 'Q'),
+        (Fraction(15, 4), 'H'),
+    ]
+    assert lyre.read_loose(text).tempos == ((0, 500_000),)
+
+
+def test_loose_beat_that_lost_spaces_is_rejected():
+    with pytest.raises(ValueError, match=r"line 4: '\(YZN\)C '"):
+        lyre.read_loose('@bpm 73\n(TZ) B /(EA)   /\n(YZN)\nC /N M /\n')
+
+
+def test_loose_switches_between_beats_and_delays():
+    text = '@bpm 120\nA B /\n@note_delay 0.25\nCD\n'
+    assert loose(text) == [(0, 'A'), (Fraction(1, 2), 'B'), (1, 'C'), (Fraction(5, 4), 'D')]
+    assert lyre.read_loose(text).tempos == ((0, 500_000), (TPB, 1_000_000))
+    with pytest.raises(ValueError, match='@break_after'):
+        lyre.read_loose('@bpm 120\n@break_after 4\n')
+
+
+def test_cli_converts_a_community_chart_to_its_timing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    (tmp_path / 'in.sh').write_text('(AD) G/H\n', encoding='utf-8')
+    monkeypatch.setattr('sys.argv', ['lyre.py', str(tmp_path / 'in.sh')])
+    lyre.main()
+    notes = play.parse_chart((tmp_path / 'in.txt').read_text(encoding='utf-8'))
+    assert [(k, t) for t, _, k in notes] == [
+        ('A', 0),
+        ('D', 0),
+        ('G', pytest.approx(0.25)),
+        ('H', pytest.approx(0.4)),
+    ]
+
+
+def test_cli_refuses_to_overwrite_the_input(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    (tmp_path / 'in.txt').write_text('A\n', encoding='utf-8')
+    monkeypatch.setattr('sys.argv', ['lyre.py', str(tmp_path / 'in.txt')])
+    with pytest.raises(SystemExit):
+        lyre.main()
+    assert (tmp_path / 'in.txt').read_text(encoding='utf-8') == 'A\n'
