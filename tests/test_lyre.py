@@ -138,9 +138,9 @@ def test_horn_keeps_every_key_on_the_upper_rows():
 
 def test_default_chart_path_names_the_options():
     source = Path('dir/song.mid')
-    assert lyre.default_chart_path(source, None, False, False, None, False) == Path('dir/song.txt')
+    assert lyre.default_chart_path(source, None, False, False, None, False) == Path('dir/song.md')
     assert lyre.default_chart_path(source, 2, True, False, (0, 6), True) == Path(
-        'dir/song.horn.max2.parts0+6.human.txt'
+        'dir/song.horn.max2.parts0+6.human.md'
     )
 
 
@@ -223,10 +223,10 @@ def test_cli_writes_the_preview_only_with_midi(tmp_path: Path, monkeypatch: pyte
         monkeypatch.setattr('sys.argv', ['lyre.py', str(tmp_path / argv[0]), *argv[1:]])
         lyre.main()
     assert sorted(p.name for p in tmp_path.iterdir()) == [
-        'in.human.txt',
+        'in.human.md',
         'in.lyre.mid',
+        'in.md',
         'in.mid',
-        'in.txt',
     ]
 
 
@@ -324,7 +324,7 @@ def test_cli_converts_a_community_chart_to_its_timing(
     (tmp_path / 'in.sh').write_text('(AD) G/H\n', encoding='utf-8')
     monkeypatch.setattr('sys.argv', ['lyre.py', str(tmp_path / 'in.sh')])
     lyre.main()
-    notes = play.parse_chart((tmp_path / 'in.txt').read_text(encoding='utf-8'))
+    notes = play.parse_chart((tmp_path / 'in.md').read_text(encoding='utf-8'))
     assert [(k, t) for t, _, k in notes] == [
         ('A', 0),
         ('D', 0),
@@ -334,8 +334,8 @@ def test_cli_converts_a_community_chart_to_its_timing(
 
 
 def test_cli_refuses_to_overwrite_the_input(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    (tmp_path / 'in.txt').write_text('A\n', encoding='utf-8')
-    monkeypatch.setattr('sys.argv', ['lyre.py', str(tmp_path / 'in.txt')])
+    (tmp_path / 'in.md').write_text('A\n', encoding='utf-8')
+    monkeypatch.setattr('sys.argv', ['lyre.py', str(tmp_path / 'in.md')])
     with pytest.raises(SystemExit):
         lyre.main()
-    assert (tmp_path / 'in.txt').read_text(encoding='utf-8') == 'A\n'
+    assert (tmp_path / 'in.md').read_text(encoding='utf-8') == 'A\n'

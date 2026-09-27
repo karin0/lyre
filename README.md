@@ -3,15 +3,15 @@
 `lyre.py` converts a MIDI file or a chart copied from the community into a key chart for the Windsong Lyre in Genshin Impact, written for `play.py` or for a human to read, and optionally renders the chart back to MIDI for listening. `play.py` plays a chart in the game.
 
 ```sh
-uv run lyre.py song.mid                             # writes song.txt
-uv run lyre.py song.mid --human                     # writes song.human.txt
-uv run lyre.py song.mid --midi                      # writes song.txt and song.lyre.mid
-uv run lyre.py song.mid --horn --max-keys 2 --hold  # writes song.horn.max2.hold.txt
-uv run lyre.py song.mid --max-keys 2 -o easy.txt    # writes easy.txt
+uv run lyre.py song.mid                             # writes song.md
+uv run lyre.py song.mid --human                     # writes song.human.md
+uv run lyre.py song.mid --midi                      # writes song.md and song.lyre.mid
+uv run lyre.py song.mid --horn --max-keys 2 --hold  # writes song.horn.max2.hold.md
+uv run lyre.py song.mid --max-keys 2 -o easy.md     # writes easy.md
 uv run lyre.py song.mid --list-parts                # lists the parts to pick with --parts
-uv run lyre.py copy.sh                              # reads a community chart, writes copy.txt
-uv run lyre.py song.mid --parts 0 5                 # writes song.parts0+5.txt
-uv run play.py song.txt                             # plays song.txt in the focused window
+uv run lyre.py copy.sh                              # reads a community chart, writes copy.md
+uv run lyre.py song.mid --parts 0 5                 # writes song.parts0+5.md
+uv run play.py song.md                              # plays song.md in the focused window
 ./check.sh                                          # ruff, pyright, pytest
 ```
 
@@ -68,9 +68,9 @@ Lines starting with `@` are directives:
 - `@bar_sep 'S'` sets the separator, `/` by default. It splits bars for `@break_after`, and beats after a tempo marker.
 - `@break_after N` adds a space after each bar made of exactly N keys and spaces, which separates runs of single notes. It is rejected in beats.
 
-The keys then go through steps 2 to 7 above as one part in 4/4. Onsets that would need more than 16 slots in a beat, such as a space and a bracketed key in one beat at the default times, move by up to 1/32 beat. A chart whose default path is its input, such as `copy.txt`, needs `-o`.
+The keys then go through steps 2 to 7 above as one part in 4/4. Onsets that would need more than 16 slots in a beat, such as a space and a bracketed key in one beat at the default times, move by up to 1/32 beat. A chart whose default path is its input, such as `copy.md`, needs `-o`.
 
-The preview MIDI written with `--midi` is named after the chart, such as `song.human.lyre.mid` beside `song.human.txt`. It follows the grid of the chart, keeps the original tempo map and plays every press on a General MIDI harp. A held key sounds until its release, and a tap rings for one beat or until the same key is pressed again.
+The preview MIDI written with `--midi` is named after the chart, such as `song.human.lyre.mid` beside `song.human.md`. It follows the grid of the chart, keeps the original tempo map and plays every press on a General MIDI harp. A held key sounds until its release, and a tap rings for one beat or until the same key is pressed again.
 
 ## Playing
 
