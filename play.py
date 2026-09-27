@@ -2,20 +2,22 @@
 
 import argparse
 import ast
+import math
 import queue
 import re
 import time
 
+from collections.abc import Callable
 from fractions import Fraction
 from pathlib import Path
 
 import keyboard
 
-# Seconds from the start, and the keys pressed together.
-type Press = tuple[float, str]
+# Press and release in seconds from the start, and the key. A tap releases where it presses.
+type Note = tuple[float, float, str]
 
 HEADER = re.compile(r'([\d.]+) BPM, .* one slot = (\d+(?:/\d+)?) note')
-TOKEN = re.compile(r'\([A-Z]+\)|[A-Z]| ')
+TOKEN = re.compile(r'<([\d.]+)>|\(([A-Za-z]+)\)|([A-Za-z ])')
 LOOSE_TOKEN = re.compile(r'\([A-Z]+\)|[A-Z]| |[{【\[]|[}】\]]')
 NOTE_DELAY = 0.15
 SPACE_DELAY = 0.1
@@ -24,22 +26,42 @@ TRIGGERS = frozenset(('k', ',', 'space'))
 QUIT = '`'
 
 
-def parse_chart(text: str) -> tuple[Press, ...]:
-    '''Time the presses of a chart written by lyre.py at the tempo on its header line.'''
+def parse_chart(text: str) -> tuple[Note, ...]:
+    '''Time the notes of a chart written by lyre.py from its header tempo and tempo markers.
+
+    A lowercase key releases the key pressed before it, and a key pressed with no release
+    before its next press is a tap.
+    '''
     header = HEADER.search(text)
     if header is None:
         raise ValueError('chart has no tempo line')
-    slot = 240 / float(header[1]) * float(Fraction(header[2]))
-    tokens = TOKEN.findall(text.split('```')[1].replace('\n', ''))
-    return tuple((i * slot, t.strip('()')) for i, t in enumerate(tokens) if t != ' ')
+    slot_note = float(Fraction(header[2]))
+    slot = 240 / float(header[1]) * slot_note
+    now = 0.0
+    notes: list[Note] = []
+    held: dict[str, int] = {}  # key -> index of its latest press in notes
+    for bpm, chord, single in TOKEN.findall(text.split('```')[1].replace('\n', '')):
+        if bpm:
+            slot = 240 / float(bpm) * slot_note
+            continue
+        for key in chord or single.strip():
+            if key.isupper():
+                held[key] = len(notes)
+                notes.append((now, now, key))
+            elif (i := held.pop(key.upper(), None)) is not None:
+                notes[i] = (notes[i][0], now, key.upper())
+            else:
+                raise ValueError(f'{key.upper()} released without a press')
+        now += slot
+    return tuple(notes)
 
 
-def parse_loose(text: str) -> tuple[Press, ...]:
+def parse_loose(text: str) -> tuple[Note, ...]:
     '''Time the presses of a community chart, which gives no durations, at fixed delays.
 
     Keys inside `{}`, `【】` or `[]` form a fast run at half the note delay.
     '''
-    presses: list[Press] = []
+    notes: list[Note] = []
     now = 0.0
     note_delay, space_delay = NOTE_DELAY, SPACE_DELAY
     bar_sep = '/'
@@ -50,7 +72,7 @@ def parse_loose(text: str) -> tuple[Press, ...]:
             case []:
                 continue
             case ['@clear']:
-                presses.clear()
+                notes.clear()
                 now = 0.0
                 continue
             case ['@bar_sep', arg]:
@@ -80,26 +102,60 @@ def parse_loose(text: str) -> tuple[Press, ...]:
                     case ' ':
                         now += space_delay
                     case _:
-                        presses.append((now, token.strip('()')))
+                        notes.extend((now, now, key) for key in token.strip('()'))
                         now += note_delay / 2 if depth else note_delay
             if break_after and break_after.fullmatch(bar):
                 now += space_delay
-    return tuple(presses)
+    return tuple(notes)
 
 
-def send(keys: str) -> None:
-    keyboard.send('+'.join(keys.lower()))
+def timeline(notes: tuple[Note, ...]) -> list[tuple[float, int, str, bool]]:
+    '''Key actions (seconds, order, key, down) sorted by time.
+
+    At one moment, held keys release before new presses so that a key can be pressed again,
+    and taps release after all presses so that a chord goes down together.
+    '''
+    actions: list[tuple[float, int, str, bool]] = []
+    for press, release, key in notes:
+        actions.append((press, 1, key, True))
+        actions.append((release, 2 if release == press else 0, key, False))
+    return sorted(actions)
 
 
-def play(presses: tuple[Press, ...]) -> None:
+def perform(notes: tuple[Note, ...], wait: Callable[[float], bool]) -> None:
+    '''Send each key action once `wait` returns for its time, stopping when it returns False.'''
+    down: set[str] = set()
+    try:
+        for at, _, key, press in timeline(notes):
+            if not wait(at):
+                return
+            if press:
+                keyboard.press(key.lower())
+                down.add(key)
+            else:
+                keyboard.release(key.lower())
+                down.discard(key)
+    finally:
+        for key in down:
+            keyboard.release(key.lower())
+
+
+def play(notes: tuple[Note, ...]) -> None:
     start = time.monotonic() + START_DELAY
-    for at, keys in presses:
+
+    def wait(at: float) -> bool:
         time.sleep(max(0, start + at - time.monotonic()))
-        send(keys)
+        return True
+
+    perform(notes, wait)
 
 
-def step(presses: tuple[Press, ...]) -> None:
-    '''Send the next press on each trigger key, ignoring the key repeat of a held trigger.'''
+def step(notes: tuple[Note, ...]) -> None:
+    '''Advance to the next press on each trigger key, ignoring the key repeat of a held trigger.
+
+    Releases between two presses are sent with the later press, and those after the last
+    press on one more trigger.
+    '''
     downs: queue.SimpleQueue[str] = queue.SimpleQueue()
     held: set[str] = set()
 
@@ -112,11 +168,19 @@ def step(presses: tuple[Press, ...]) -> None:
             downs.put(name)
 
     keyboard.hook(on_event)
-    for _, keys in presses:
-        while (name := downs.get()) not in TRIGGERS:
-            if name == QUIT:
-                return
-        send(keys)
+    presses = iter(sorted({press for press, _, _ in notes}))
+    reached = -math.inf
+
+    def wait(at: float) -> bool:
+        nonlocal reached
+        while at > reached:
+            while (name := downs.get()) not in TRIGGERS:
+                if name == QUIT:
+                    return False
+            reached = next(presses, math.inf)
+        return True
+
+    perform(notes, wait)
 
 
 def main() -> None:
@@ -131,11 +195,11 @@ def main() -> None:
     args = parser.parse_args()
     chart: Path = args.chart
     text = chart.read_text(encoding='utf-8')
-    presses = parse_loose(text) if args.loose else parse_chart(text)
+    notes = parse_loose(text) if args.loose else parse_chart(text)
     if args.step:
-        step(presses)
+        step(notes)
     else:
-        play(presses)
+        play(notes)
 
 
 if __name__ == '__main__':
