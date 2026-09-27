@@ -9,8 +9,12 @@ from lyre import Chart, Note, Song
 TPB = 480
 
 
-def song(notes: tuple[Note, ...]) -> Song:
-    return Song(notes, TPB, ((0, 500_000),), (4, 4))
+def song(notes: tuple[Note, ...], tempos: tuple[tuple[int, int], ...] = ((0, 500_000),)) -> Song:
+    return Song(notes, TPB, tempos, (4, 4))
+
+
+def tap(tick: int, pitch: int) -> Note:
+    return Note(tick, pitch, tick + TPB // 4)
 
 
 def test_key_map_covers_white_keys_c3_to_b5():
@@ -36,8 +40,8 @@ def test_out_of_range_is_folded_by_octaves():
 
 def test_accidental_takes_the_consonant_neighbour():
     # A#3 under F5: A3 forms a major third with F, B3 a tritone.
-    notes = (Note(0, 58), Note(0, 77))
-    assert lyre.resolve(notes, TPB) == (Note(0, 57), Note(0, 77))
+    notes = (tap(0, 58), tap(0, 77))
+    assert lyre.resolve(notes, TPB) == (tap(0, 57), tap(0, 77))
 
 
 def test_grid_is_the_coarsest_that_fits_every_onset():
@@ -47,13 +51,15 @@ def test_grid_is_the_coarsest_that_fits_every_onset():
 
 
 def test_render_groups_beats_and_bars():
-    chart = lyre.arrange(song((Note(0, 60), Note(0, 64), Note(240, 67), Note(4 * TPB, 72))))
+    chart = lyre.arrange(song((tap(0, 60), tap(0, 64), tap(240, 67), tap(4 * TPB, 72))))
     body = lyre.render(chart, 't').split('```\n')[1]
     assert body == '(AD)G/  /  /  /\nQ /  /  /  /\n'
 
 
 def test_preview_midi_matches_chart(tmp_path: Path):
-    chart = Chart(((0, (60, 64)), (1, (60,)), (4, (72,))), TPB, 1, 4, 0, song(()))
+    chart = Chart(
+        ((0, ((60, 0), (64, 3))), (1, ((60, 0),)), (4, ((72, 0),))), TPB, 1, 4, 0, song(())
+    )
     path = tmp_path / 'out.mid'
     lyre.write_midi(chart, path)
     tick = 0
@@ -69,8 +75,9 @@ def test_preview_midi_matches_chart(tmp_path: Path):
             case _:
                 pass
     assert sorted(starts) == [(0, 60), (0, 64), (TPB, 60), (4 * TPB, 72)]
-    # A repeated key cuts off its own ring.
+    # A repeated key cuts off its own ring, and a held key sounds until its release.
     assert ends[60] == [TPB, 2 * TPB]
+    assert ends[64] == [3 * TPB]
 
 
 def test_thin_keeps_outer_voices():
@@ -87,8 +94,8 @@ def test_thin_drops_doublings_then_fifths():
 
 
 def test_max_keys_caps_every_press():
-    notes = tuple(Note(0, p) for p in (48, 52, 55, 60))
-    assert lyre.arrange(song(notes), 2).events == ((0, (48, 60)),)
+    notes = tuple(tap(0, p) for p in (48, 52, 55, 60))
+    assert lyre.arrange(song(notes), 2).events == ((0, ((48, 0), (60, 0))),)
 
 
 def test_black_keys_outweigh_octave_folds():
@@ -99,12 +106,59 @@ def test_black_keys_outweigh_octave_folds():
 
 
 def test_horn_keeps_every_key_on_the_upper_rows():
-    notes = (Note(0, 43), Note(0, 67), Note(TPB, 50))
+    notes = (tap(0, 43), tap(0, 67), tap(TPB, 50))
     chart = lyre.arrange(song(notes), lowest=lyre.HORN_LOWEST)
-    assert all(p >= lyre.HORN_LOWEST for _, pitches in chart.events for p in pitches)
+    assert all(p >= lyre.HORN_LOWEST for _, keys in chart.events for p, _ in keys)
 
 
 def test_default_chart_path_names_the_options():
     source = Path('dir/song.mid')
-    assert lyre.default_chart_path(source, None, False) == Path('dir/song.txt')
-    assert lyre.default_chart_path(source, 2, True) == Path('dir/song.horn.max2.txt')
+    assert lyre.default_chart_path(source, None, False, False) == Path('dir/song.txt')
+    assert lyre.default_chart_path(source, 2, True, True) == Path('dir/song.horn.max2.hold.txt')
+
+
+def test_read_midi_pairs_note_ends_and_starts_at_the_default_tempo(tmp_path: Path):
+    messages = (
+        (0, mido.Message('note_on', note=60, velocity=80)),
+        (TPB, mido.MetaMessage('set_tempo', tempo=400_000)),
+        (0, mido.Message('note_on', note=64, velocity=80)),
+        (TPB, mido.Message('note_off', note=60)),
+        (0, mido.Message('note_on', note=64, velocity=0)),
+        (0, mido.Message('note_on', note=67, velocity=80)),
+    )
+    track = mido.MidiTrack(msg.copy(time=delta) for delta, msg in messages)
+    midi = mido.MidiFile(ticks_per_beat=TPB)
+    midi.tracks.append(track)
+    path = tmp_path / 'in.mid'
+    midi.save(path)
+    result = lyre.read_midi(path)
+    # A note left sounding ends with its track.
+    assert result.notes == (
+        Note(0, 60, 2 * TPB),
+        Note(TPB, 64, 2 * TPB),
+        Note(2 * TPB, 67, 2 * TPB),
+    )
+    assert result.tempos == ((0, 500_000), (TPB, 400_000))
+
+
+def test_hold_keeps_keys_down_until_the_note_ends_or_the_key_repeats():
+    notes = (
+        Note(0, 60, 2 * TPB),
+        Note(0, 72, 4 * TPB),
+        Note(TPB, 72, 3 * TPB),
+        Note(TPB, 64, TPB + 60),
+    )
+    # One slot per beat: C4 holds two slots, C5 is cut by its repeat, and E4 is shorter than a slot.
+    assert lyre.arrange(song(notes), hold=True).events == (
+        (0, ((60, 2), (72, 1))),
+        (1, ((64, 0), (72, 2))),
+    )
+    assert lyre.arrange(song(notes)).events == ((0, ((60, 0), (72, 0))), (1, ((64, 0), (72, 0))))
+
+
+def test_render_writes_releases_and_tempo_changes():
+    tempos = ((0, 500_000), (TPB, 500_000), (2 * TPB, 400_000))
+    chart = Chart(((0, ((60, 2), (72, 1))), (1, ((72, 0),))), TPB, 1, 4, 0, song((), tempos))
+    text = lyre.render(chart, 't')
+    assert text.split('```\n')[1] == '(AQ)/(qQ)/<150>a/ /\n'
+    assert text.split('\n')[2].startswith('120 BPM,')

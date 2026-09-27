@@ -2,7 +2,7 @@
 
 import argparse
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from fractions import Fraction
 from pathlib import Path
 
@@ -28,19 +28,24 @@ BARS_PER_PARAGRAPH = 4
 class Note:
     tick: int
     pitch: int
+    end: int
 
 
 @dataclass(frozen=True)
 class Song:
     notes: tuple[Note, ...]
     ticks_per_beat: int
-    tempos: tuple[tuple[int, int], ...]  # (tick, microseconds per quarter note)
+    tempos: tuple[tuple[int, int], ...]  # (tick, microseconds per quarter note), from tick 0
     time_signature: tuple[int, int]
+
+
+# A pitch and the slots its key stays down, 0 for a tap.
+type Key = tuple[int, int]
 
 
 @dataclass(frozen=True)
 class Chart:
-    events: tuple[tuple[int, tuple[int, ...]], ...]  # (slot, ascending pitches)
+    events: tuple[tuple[int, tuple[Key, ...]], ...]  # (slot, keys in ascending pitch)
     slot_ticks: int
     slots_per_beat: int
     beats_per_bar: int
@@ -55,23 +60,32 @@ def read_midi(path: Path) -> Song:
     signatures: list[tuple[int, tuple[int, int]]] = []
     for track in midi.tracks:
         tick = 0
+        sounding: dict[tuple[int, int], list[int]] = {}  # (channel, pitch) -> onsets
         for msg in track:
             tick += msg.time
             match msg:
                 case mido.Message(type='note_on', velocity=v, channel=c, note=pitch) if (
                     v > 0 and c != DRUM_CHANNEL
                 ):
-                    notes.append(Note(tick, pitch))
+                    sounding.setdefault((c, pitch), []).append(tick)
+                case mido.Message(type='note_on' | 'note_off', channel=c, note=pitch) if (
+                    sounding.get((c, pitch))
+                ):
+                    notes.append(Note(sounding[c, pitch].pop(0), pitch, tick))
                 case mido.MetaMessage(type='set_tempo', tempo=tempo):
                     tempos.append((tick, tempo))
                 case mido.MetaMessage(type='time_signature', numerator=n, denominator=d):
                     signatures.append((tick, (n, d)))
                 case _:
                     pass
+        notes.extend(Note(t, pitch, tick) for (_, pitch), ts in sounding.items() for t in ts)
+    tempos.sort(key=lambda t: t[0])
+    if not tempos or tempos[0][0] > 0:
+        tempos.insert(0, (0, 500_000))  # The MIDI default of 120 BPM.
     return Song(
         notes=tuple(sorted(notes, key=lambda n: (n.tick, n.pitch))),
         ticks_per_beat=midi.ticks_per_beat,
-        tempos=tuple(sorted(tempos)) or ((0, 500_000),),
+        tempos=tuple(tempos),
         time_signature=min(signatures)[1] if signatures else (4, 4),
     )
 
@@ -128,7 +142,7 @@ def resolve(notes: tuple[Note, ...], window: int) -> tuple[Note, ...]:
         pitch = min(
             (note.pitch - 1, note.pitch + 1), key=lambda p: clash(p, note.tick, context, window)
         )
-        resolved.append(Note(note.tick, pitch))
+        resolved.append(replace(note, pitch=pitch))
     return tuple(resolved)
 
 
@@ -158,21 +172,34 @@ def thin(pitches: tuple[int, ...], max_keys: int) -> tuple[int, ...]:
     return tuple(sorted([pitches[-1], pitches[0], *inner][:max_keys]))
 
 
-def arrange(song: Song, max_keys: int | None = None, lowest: int = LOWEST) -> Chart:
+def arrange(
+    song: Song, max_keys: int | None = None, lowest: int = LOWEST, *, hold: bool = False
+) -> Chart:
+    '''With `hold`, a key stays down until its note ends or the key is pressed again.'''
     tpb = song.ticks_per_beat
     numerator, denominator = song.time_signature
     beat = tpb * 4 // denominator
     transpose = choose_transpose(tuple(n.pitch for n in song.notes), lowest)
-    notes = tuple(Note(n.tick, fold(n.pitch + transpose, lowest)) for n in song.notes)
+    notes = tuple(replace(n, pitch=fold(n.pitch + transpose, lowest)) for n in song.notes)
     notes = resolve(notes, beat)
     slot = choose_slot(tuple(n.tick for n in notes), beat, tpb // 32)
-    chords: dict[int, set[int]] = {}
+    chords: dict[int, dict[int, int]] = {}  # slot -> pitch -> latest end tick
     for n in notes:
-        chords.setdefault(round(n.tick / slot), set()).add(n.pitch)
+        ends = chords.setdefault(round(n.tick / slot), {})
+        ends[n.pitch] = max(ends.get(n.pitch, n.end), n.end)
+    events: list[tuple[int, tuple[Key, ...]]] = []
+    next_press: dict[int, int] = {}
+    for s in sorted(chords, reverse=True):
+        ends = chords[s]
+        keys: list[Key] = []
+        for p in thin(tuple(sorted(ends)), max_keys or len(ends)):
+            release = round(ends[p] / slot)
+            release = min(release, next_press.get(p, release))
+            keys.append((p, max(release - s, 0) if hold else 0))
+            next_press[p] = s
+        events.append((s, tuple(keys)))
     return Chart(
-        events=tuple(
-            (s, thin(tuple(sorted(chords[s])), max_keys or len(chords[s]))) for s in sorted(chords)
-        ),
+        events=tuple(reversed(events)),
         slot_ticks=slot,
         slots_per_beat=beat // slot,
         beats_per_bar=numerator,
@@ -181,42 +208,66 @@ def arrange(song: Song, max_keys: int | None = None, lowest: int = LOWEST) -> Ch
     )
 
 
+def bpm(tempo: int) -> str:
+    return f'{round(mido.tempo2bpm(tempo), 2):g}'
+
+
 def render(chart: Chart, title: str) -> str:
-    tokens: dict[int, str] = {}
-    for slot, pitches in chart.events:
-        keys = ''.join(KEY_OF[p] for p in pitches)
-        tokens[slot] = keys if len(keys) == 1 else f'({keys})'
+    letters: dict[int, str] = {}
+    releases: dict[int, list[int]] = {}
+    for slot, keys in chart.events:
+        letters[slot] = ''.join(KEY_OF[p] for p, _ in keys)
+        for p, length in keys:
+            if length:
+                releases.setdefault(slot + length, []).append(p)
+    tempos: dict[int, str] = {}
+    for tick, tempo in chart.song.tempos:
+        tempos[round(tick / chart.slot_ticks)] = bpm(tempo)
+    markers: dict[int, str] = {}
+    current = tempos[0]
+    for slot, value in sorted(tempos.items()):
+        if value != current:
+            markers[slot] = f'<{value}>'
+            current = value
+
+    def token(slot: int) -> str:
+        keys = ''.join(KEY_OF[p].lower() for p in sorted(releases.get(slot, ())))
+        keys += letters.get(slot, '')
+        return markers.get(slot, '') + (f'({keys})' if len(keys) > 1 else keys or ' ')
+
     bar_slots = chart.slots_per_beat * chart.beats_per_bar
-    bar_count = chart.events[-1][0] // bar_slots + 1 if chart.events else 0
+    bar_count = max((*letters, *releases), default=-1) // bar_slots + 1
     lines: list[str] = []
     for bar in range(bar_count):
         if bar and bar % BARS_PER_PARAGRAPH == 0:
             lines.append('')
         beats = (
-            ''.join(tokens.get(s, ' ') for s in range(b, b + chart.slots_per_beat))
+            ''.join(token(s) for s in range(b, b + chart.slots_per_beat))
             for b in range(bar * bar_slots, (bar + 1) * bar_slots, chart.slots_per_beat)
         )
         lines.append(''.join(f'{b}/' for b in beats))
 
-    bpm = round(mido.tempo2bpm(chart.song.tempos[0][1]), 2)
     slot_note = Fraction(chart.slot_ticks, 4 * chart.song.ticks_per_beat)
     body = '\n'.join(lines)
     return (
         f'# {title}\n\n'
-        f'{bpm:g} BPM, {chart.song.time_signature[0]}/{chart.song.time_signature[1]}, '
+        f'{tempos[0]} BPM, {chart.song.time_signature[0]}/{chart.song.time_signature[1]}, '
         f'one slot = {slot_note} note, transposed {chart.transpose:+d} semitones.\n\n'
         f'```\n{body}\n```\n'
     )
 
 
 def write_midi(chart: Chart, path: Path) -> None:
-    '''Render the chart as a harp track on the original tempo map, one beat of ring per note.'''
+    '''Render the chart as a harp track on the original tempo map.
+
+    A held key sounds until its release, a tapped one rings for one beat.
+    '''
     song = chart.song
     ring = song.ticks_per_beat
-    starts: dict[int, list[int]] = {}
-    for slot, pitches in chart.events:
-        for p in pitches:
-            starts.setdefault(p, []).append(slot * chart.slot_ticks)
+    starts: dict[int, list[tuple[int, int]]] = {}  # pitch -> (tick, held ticks)
+    for slot, keys in chart.events:
+        for p, length in keys:
+            starts.setdefault(p, []).append((slot * chart.slot_ticks, length * chart.slot_ticks))
 
     events: list[tuple[int, int, mido.Message | mido.MetaMessage]] = [
         (tick, 0, mido.MetaMessage('set_tempo', tempo=tempo)) for tick, tempo in song.tempos
@@ -226,9 +277,10 @@ def write_midi(chart: Chart, path: Path) -> None:
         (0, 0, mido.MetaMessage('time_signature', numerator=numerator, denominator=denominator))
     )
     events.append((0, 0, mido.Message('program_change', program=LYRE_PROGRAM)))
-    for pitch, ticks in starts.items():
-        for start, following in zip(ticks, [*ticks[1:], None], strict=True):
-            end = start + ring if following is None else min(start + ring, following)
+    for pitch, presses in starts.items():
+        for (start, held), following in zip(presses, [*presses[1:], None], strict=True):
+            end = start + (held or ring)
+            end = end if following is None else min(end, following[0])
             events.append((start, 2, mido.Message('note_on', note=pitch, velocity=80)))
             events.append((end, 1, mido.Message('note_off', note=pitch)))
 
@@ -242,8 +294,9 @@ def write_midi(chart: Chart, path: Path) -> None:
     midi.save(path)
 
 
-def default_chart_path(source: Path, max_keys: int | None, horn: bool) -> Path:
+def default_chart_path(source: Path, max_keys: int | None, horn: bool, hold: bool) -> Path:
     tags = ('.horn' if horn else '') + (f'.max{max_keys}' if max_keys else '')
+    tags += '.hold' if hold else ''
     return source.with_suffix(f'{tags}.txt')
 
 
@@ -257,11 +310,16 @@ def main() -> None:
         '--max-keys', type=int, choices=range(1, 22), metavar='N', help='keys pressed at once'
     )
     parser.add_argument('--horn', action='store_true', help='play on the horn, C4 to B5')
+    parser.add_argument(
+        '--hold', action='store_true', help='hold keys for the note durations, for sustaining'
+    )
     args = parser.parse_args()
     source: Path = args.midi
     lowest = HORN_LOWEST if args.horn else LOWEST
-    chart = arrange(read_midi(source), args.max_keys, lowest)
-    chart_path: Path = args.output or default_chart_path(source, args.max_keys, args.horn)
+    chart = arrange(read_midi(source), args.max_keys, lowest, hold=args.hold)
+    chart_path: Path = args.output or default_chart_path(
+        source, args.max_keys, args.horn, args.hold
+    )
     preview_path = chart_path.with_suffix('.lyre.mid')
     chart_path.write_text(render(chart, source.stem), encoding='utf-8')
     write_midi(chart, preview_path)
