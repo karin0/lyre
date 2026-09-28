@@ -6,6 +6,7 @@ import math
 import re
 
 from collections import Counter
+from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from fractions import Fraction
 from pathlib import Path
@@ -271,16 +272,25 @@ def fold(pitch: int, lowest: int) -> int:
     return pitch
 
 
-def choose_transpose(pitches: tuple[int, ...], lowest: int) -> int:
-    '''Minimize the notes on black keys, then those outside the range, then the shift.
+def choose_transpose(notes: tuple[Note, ...], lowest: int) -> int:
+    '''Minimize the notes on black keys, then the top notes of onsets outside the range, then
+    all notes outside the range, then the shift.
 
     A black key costs more than any octave fold because resolving it changes the pitch class.
+    Folding the top voice before the others keeps the melody's intervals when the song spans
+    more octaves than the range.
     '''
+    pitches = tuple(n.pitch for n in notes)
+    tops: dict[int, int] = {}
+    for n in notes:
+        tops[n.tick] = max(tops.get(n.tick, n.pitch), n.pitch)
 
-    def cost(k: int) -> tuple[int, int, int]:
-        moved = [p + k for p in pitches]
-        black = sum(not is_white(p) for p in moved)
-        return black, sum(not lowest <= p <= HIGHEST for p in moved), abs(k)
+    def outside(k: int, moved: Iterable[int]) -> int:
+        return sum(not lowest <= p + k <= HIGHEST for p in moved)
+
+    def cost(k: int) -> tuple[int, int, int, int]:
+        black = sum(not is_white(p + k) for p in pitches)
+        return black, outside(k, tops.values()), outside(k, pitches), abs(k)
 
     return min(range(-24, 25), key=cost)
 
@@ -353,7 +363,7 @@ def arrange(
     tpb = song.ticks_per_beat
     numerator, denominator = song.time_signature
     beat = tpb * 4 // denominator
-    transpose = choose_transpose(tuple(n.pitch for n in song.notes), lowest)
+    transpose = choose_transpose(song.notes, lowest)
     notes = tuple(replace(n, pitch=fold(n.pitch + transpose, lowest)) for n in song.notes)
     notes = resolve(notes, beat)
     offsets: dict[int, list[int]] = {}  # beat -> offsets in ticks of the onsets and releases
