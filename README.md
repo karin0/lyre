@@ -63,7 +63,7 @@ A tempo marker such as `<73>`, written as in the chart format above, reads the r
 
 Lines starting with `@` are directives:
 
-- `@note_delay S` and `@space_delay S` set the time of a key and a space in seconds, and return from beats to fixed times.
+- `@note_delay S` and `@space_delay S` set the time of a key and a space in seconds, and return from beats to fixed times. `S` is a decimal or a fraction without spaces, such as `0.15` or `1/8`.
 - `@clear` drops everything before it.
 - `@bar_sep 'S'` sets the separator, `/` by default. It splits bars for `@break_after`, and beats after a tempo marker.
 - `@break_after N` adds a space after each bar made of exactly N keys and spaces, which separates runs of single notes. It is rejected in beats.
