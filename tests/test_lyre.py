@@ -131,12 +131,32 @@ def test_black_keys_outweigh_octave_folds():
     assert lyre.choose_transpose(g_major, lyre.HORN_LOWEST) == 17
 
 
-def test_horn_folds_the_accompaniment_before_the_melody():
-    # A melody over C4..B5 above a C3 triad at every onset. Shifting by 12 would fold fewer notes
-    # but split the melody at C5.
+@pytest.mark.parametrize('length', [0, TPB // 4])
+def test_horn_folds_the_accompaniment_before_the_melody(length: int):
+    # A melody over C4..B5 above a C3 triad at every onset, also as the zero-length taps of a
+    # community chart. Shifting by 12 would fold fewer notes but split the melody at C5.
     melody = (60, 62, 64, 65, 67, 69, 71, 72, 74, 76, 77, 79, 81, 83)
-    notes = tuple(tap(i * TPB, p) for i, top in enumerate(melody) for p in (48, 52, 55, top))
+    notes = tuple(
+        Note(i * TPB, p, i * TPB + length)
+        for i, top in enumerate(melody)
+        for p in (48, 52, 55, top)
+    )
     assert lyre.choose_transpose(notes, lyre.HORN_LOWEST) == 0
+
+
+def test_held_melody_folds_after_the_arpeggio_under_it():
+    # Each melody note of C5..C6 is held for a beat over an arpeggio of G2, B2 and D3. Counting
+    # the arpeggio as the top of its onsets would shift by 12 and fold most of the melody.
+    melody = (72, 74, 76, 77, 79, 81, 83, 84)
+    notes = tuple(
+        n
+        for i, top in enumerate(melody)
+        for n in (
+            Note(i * TPB, top, (i + 1) * TPB),
+            *(tap(i * TPB + j * TPB // 4, p) for j, p in enumerate((43, 47, 50), 1)),
+        )
+    )
+    assert lyre.choose_transpose(notes, lyre.LOWEST) == -12
 
 
 def test_horn_keeps_every_key_on_the_upper_rows():

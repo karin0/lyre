@@ -6,7 +6,6 @@ import math
 import re
 
 from collections import Counter
-from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from fractions import Fraction
 from pathlib import Path
@@ -272,25 +271,38 @@ def fold(pitch: int, lowest: int) -> int:
     return pitch
 
 
+def skyline(notes: tuple[Note, ...]) -> tuple[int, ...]:
+    '''The pitches of the notes that no sounding note lies above at their onsets.
+
+    A note sounds at its onset even when it ends there, as a tap from a community chart does.
+    '''
+    sounding: list[Note] = []
+    tops: list[int] = []
+    for n in sorted(notes, key=lambda n: (n.tick, -n.pitch)):
+        sounding = [m for m in sounding if m.tick == n.tick or m.end > n.tick]
+        if all(m.pitch <= n.pitch for m in sounding):
+            tops.append(n.pitch)
+        sounding.append(n)
+    return tuple(tops)
+
+
 def choose_transpose(notes: tuple[Note, ...], lowest: int) -> int:
-    '''Minimize the notes on black keys, then the top notes of onsets outside the range, then
-    all notes outside the range, then the shift.
+    '''Minimize the notes on black keys, then the skyline notes outside the range, then all
+    notes outside the range, then the shift.
 
     A black key costs more than any octave fold because resolving it changes the pitch class.
-    Folding the top voice before the others keeps the melody's intervals when the song spans
-    more octaves than the range.
+    Folding the skyline before the others keeps the melody's intervals when the song spans more
+    octaves than the range.
     '''
     pitches = tuple(n.pitch for n in notes)
-    tops: dict[int, int] = {}
-    for n in notes:
-        tops[n.tick] = max(tops.get(n.tick, n.pitch), n.pitch)
+    tops = skyline(notes)
 
-    def outside(k: int, moved: Iterable[int]) -> int:
+    def outside(k: int, moved: tuple[int, ...]) -> int:
         return sum(not lowest <= p + k <= HIGHEST for p in moved)
 
     def cost(k: int) -> tuple[int, int, int, int]:
         black = sum(not is_white(p + k) for p in pitches)
-        return black, outside(k, tops.values()), outside(k, pitches), abs(k)
+        return black, outside(k, tops), outside(k, pitches), abs(k)
 
     return min(range(-24, 25), key=cost)
 
