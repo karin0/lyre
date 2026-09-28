@@ -44,7 +44,7 @@ def test_key_map_covers_white_keys_c3_to_b5():
 
 
 def test_g_major_moves_to_c_major():
-    g_major = (55, 57, 59, 60, 62, 64, 66, 67)
+    g_major = tuple(tap(i * TPB, p) for i, p in enumerate((55, 57, 59, 60, 62, 64, 66, 67)))
     assert lyre.choose_transpose(g_major, lyre.LOWEST) == 5
 
 
@@ -126,8 +126,17 @@ def test_max_keys_caps_every_press():
 def test_black_keys_outweigh_octave_folds():
     # A G major bass line under a melody with one F sharp and one C. Shifting by 10 folds nothing
     # but puts the C on a black key; shifting by 17 folds two notes and keeps every key white.
-    g_major = (50, 52, 55, 59) * 5 + (60, 64, 66, 67, 71)
+    pitches = (50, 52, 55, 59) * 5 + (60, 64, 66, 67, 71)
+    g_major = tuple(tap(i * TPB, p) for i, p in enumerate(pitches))
     assert lyre.choose_transpose(g_major, lyre.HORN_LOWEST) == 17
+
+
+def test_horn_folds_the_accompaniment_before_the_melody():
+    # A melody over C4..B5 above a C3 triad at every onset. Shifting by 12 would fold fewer notes
+    # but split the melody at C5.
+    melody = (60, 62, 64, 65, 67, 69, 71, 72, 74, 76, 77, 79, 81, 83)
+    notes = tuple(tap(i * TPB, p) for i, top in enumerate(melody) for p in (48, 52, 55, top))
+    assert lyre.choose_transpose(notes, lyre.HORN_LOWEST) == 0
 
 
 def test_horn_keeps_every_key_on_the_upper_rows():
