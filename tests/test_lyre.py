@@ -321,6 +321,12 @@ def test_loose_beats_after_a_tempo_marker_split_evenly_across_lines():
     assert lyre.read_loose(text).tempos == ((0, 500_000),)
 
 
+def test_loose_marker_on_its_own_line_starts_beats_that_keep_their_leading_spaces():
+    text = '<120>\n  A /B/  # 作者\n'
+    assert loose(text) == [(Fraction(1, 2), 'A'), (1, 'B')]
+    assert lyre.read_loose(text).tempos == ((0, 500_000),)
+
+
 def test_loose_beat_that_lost_spaces_is_rejected():
     with pytest.raises(ValueError, match=r"line 3: '\(YZN\)C '"):
         lyre.read_loose('<73>(TZ) B /(EA)   /\n(YZN)\nC /N M /\n')
