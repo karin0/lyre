@@ -70,7 +70,7 @@ Lines starting with `@` are directives:
 
 The keys then go through steps 2 to 7 above as one part in 4/4. Onsets that would need more than 16 slots in a beat, such as a space and a bracketed key in one beat at the default times, move by up to 1/32 beat. A chart whose default path is its input, such as `copy.md`, needs `-o`.
 
-The preview MIDI written with `--midi` is named after the chart, such as `song.human.lyre.mid` beside `song.human.md`. It follows the grid of the chart, keeps the original tempo map and plays every press on a General MIDI harp. A held key sounds until its release, and a tap rings for one beat or until the same key is pressed again.
+The preview MIDI written with `--midi` is named after the chart, such as `song.human.lyre.mid` beside `song.human.md`. It follows the grid of the chart, keeps the original tempo map and plays every press on a General MIDI harp. A held key sounds until its release, and a tap rings for one beat or until the same key is pressed again. The ring of one beat is an estimate, since each instrument in the game decays differently. Every tap rings equally long, so a song whose melody outlasts the notes around it, such as half-beat melody notes over an arpeggio of sixteenths, loses that contrast in the preview and in the game alike. `--horn --hold` keeps it.
 
 ## Playing
 
