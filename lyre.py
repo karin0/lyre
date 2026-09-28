@@ -205,7 +205,8 @@ def read_loose(text: str) -> Song:
     set_tempo(now)
     number = 0
     for number, raw in enumerate(text.splitlines(), 1):
-        line = raw.partition('#')[0].strip()
+        code = raw.partition('#')[0]
+        line = code.strip()
         if not line:
             continue
         if line.startswith('@'):
@@ -239,6 +240,9 @@ def read_loose(text: str) -> Song:
             if not marker:
                 continue
             line = line[split:]
+            bpm = Fraction(marker[1])  # Reads the next lines as beats.
+        else:
+            line = code.rstrip()  # Spaces starting a line are slots of its first beat.
         *closed, pending = (pending + line).split(bar_sep)
         for beat in closed:
             close_beat(beat, number)
