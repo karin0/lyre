@@ -72,29 +72,32 @@ def timeline(notes: tuple[Note, ...]) -> list[tuple[float, int, str, bool]]:
     return sorted(actions)
 
 
-def release(down: set[str]) -> None:
-    for key in down:
-        keyboard.release(key.lower())
+def release(down: set[int]) -> None:
+    for code in down:
+        keyboard.release(code)
     down.clear()
 
 
-def perform(notes: tuple[Note, ...], wait: Callable[[float, set[str]], bool]) -> None:
+def perform(notes: tuple[Note, ...], wait: Callable[[float, set[int]], bool]) -> None:
     '''Send each key action once `wait` returns for its time, stopping when it returns False.
 
-    `wait` receives the keys held down and may release them, and a later release of a key
-    that is up is skipped.
+    `wait` receives the scan codes held down and may release them, and a later release of a
+    key that is up is skipped.
     '''
-    down: set[str] = set()
+    # keyboard builds its name table on the first lookup, which would delay the first note.
+    codes = {key: keyboard.key_to_scan_codes(key.lower())[0] for _, _, key in notes}
+    down: set[int] = set()
     try:
         for at, _, key, press in timeline(notes):
             if not wait(at, down):
                 return
+            code = codes[key]
             if press:
-                keyboard.press(key.lower())
-                down.add(key)
-            elif key in down:
-                keyboard.release(key.lower())
-                down.discard(key)
+                keyboard.press(code)
+                down.add(code)
+            elif code in down:
+                keyboard.release(code)
+                down.discard(code)
     finally:
         release(down)
 
@@ -118,7 +121,7 @@ def play(notes: tuple[Note, ...], playing: Callable[[], bool]) -> None:
     clock = -START_DELAY
     last = time.monotonic()
 
-    def wait(at: float, down: set[str]) -> bool:
+    def wait(at: float, down: set[int]) -> bool:
         nonlocal clock, last
         while True:
             now = time.monotonic()
@@ -155,7 +158,7 @@ def step(notes: tuple[Note, ...]) -> None:
     presses = iter(sorted({press for press, _, _ in notes}))
     reached = -math.inf
 
-    def wait(at: float, _: set[str]) -> bool:
+    def wait(at: float, _: set[int]) -> bool:
         nonlocal reached
         while at > reached:
             while (name := downs.get()) not in TRIGGERS:
