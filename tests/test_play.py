@@ -8,6 +8,14 @@ import play
 from lyre import Note, Part, Song
 
 
+@pytest.fixture(autouse=True)
+def scan_codes_are_key_names(monkeypatch: pytest.MonkeyPatch) -> None:
+    def resolve(key: str) -> tuple[str]:
+        return (key,)
+
+    monkeypatch.setattr(play.keyboard, 'key_to_scan_codes', resolve)
+
+
 def check(notes: tuple[play.Note, ...], expected: tuple[tuple[float, str], ...]) -> None:
     '''Compare taps by their press times and keys.'''
     assert all(press == release for press, release, _ in notes)
@@ -84,6 +92,23 @@ def test_perform_releases_held_keys_when_stopped(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(play.keyboard, 'release', release)
     play.perform(((0, 2, 'Q'), (1, 1, 'A')), lambda at, _: at < 1)
     assert sent == [('q', True), ('q', False)]
+
+
+def test_perform_resolves_every_key_before_the_first_wait(monkeypatch: pytest.MonkeyPatch):
+    resolved: list[str] = []
+    seen: list[list[str]] = []
+
+    def resolve(key: str) -> tuple[str]:
+        resolved.append(key)
+        return (key,)
+
+    def wait(_: float, __: set[int]) -> bool:
+        seen.append(sorted(resolved))
+        return False
+
+    monkeypatch.setattr(play.keyboard, 'key_to_scan_codes', resolve)
+    play.perform(((0, 0, 'Q'), (1, 1, 'A')), wait)
+    assert seen == [['a', 'q']]
 
 
 def test_play_clock_stops_while_paused_and_the_pause_releases_held_keys(
