@@ -179,6 +179,22 @@ def test_held_melody_folds_after_the_arpeggio_under_it():
     assert lyre.choose_transposes(notes, lyre.LOWEST, TPB) == ((0, -12),)
 
 
+# Two bars of C major in C3..B3, then two in C5..B5, one note per beat. On the horn, a single shift
+# leaves one passage outside the range.
+LOW_THEN_HIGH = (48, 50, 52, 53, 55, 57, 59, 55, 72, 74, 76, 77, 79, 81, 83, 79)
+
+
+def test_octaves_move_a_passage_across_the_edge_of_the_range():
+    notes = tuple(tap(i * TPB, p) for i, p in enumerate(LOW_THEN_HIGH))
+    transposes = lyre.choose_transposes(notes, lyre.HORN_LOWEST, TPB, octaves=True)
+    assert transposes == ((0, 12), (8, 0))
+
+
+def test_without_octaves_a_passage_folds_note_by_note():
+    notes = tuple(tap(i * TPB, p) for i, p in enumerate(LOW_THEN_HIGH))
+    assert lyre.choose_transposes(notes, lyre.HORN_LOWEST, TPB) == ((0, 0),)
+
+
 def test_horn_keeps_every_key_on_the_upper_rows():
     notes = (tap(0, 43), tap(0, 67), tap(TPB, 50))
     chart = lyre.arrange(song(notes), lowest=lyre.HORN_LOWEST)
@@ -187,9 +203,11 @@ def test_horn_keeps_every_key_on_the_upper_rows():
 
 def test_default_chart_path_names_the_options():
     source = Path('dir/song.mid')
-    assert lyre.default_chart_path(source, None, False, False, None, False) == Path('dir/song.md')
-    assert lyre.default_chart_path(source, 2, True, False, (0, 6), True) == Path(
-        'dir/song.horn.max2.parts0+6.human.md'
+    assert lyre.default_chart_path(source, None, False, False, False, None, False) == Path(
+        'dir/song.md'
+    )
+    assert lyre.default_chart_path(source, 2, True, True, False, (0, 6), True) == Path(
+        'dir/song.horn.octaves.max2.parts0+6.human.md'
     )
 
 

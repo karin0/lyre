@@ -29,6 +29,10 @@ DRUM_CHANNEL = 9
 # Black-key notes a change of transposition must save. Several bars of a new key exceed it, a
 # chromatic run or a few borrowed chords do not.
 KEY_CHANGE_COST = 16
+# Skyline notes outside the range that a change of shift by whole octaves must save, with --octaves.
+# A four-bar chorale around C4 moves onto the horn at 5 or less, and lower values also move single
+# beats. A value per song waits on a song needing it.
+OCTAVE_CHANGE_COST = 5
 LYRE_PROGRAM = 46  # General MIDI orchestral harp, the closest timbre to the lyre.
 BARS_PER_PARAGRAPH = 4
 MIDI_SUFFIXES = ('.mid', '.midi')
@@ -303,7 +307,7 @@ def add(a: Cost, b: Cost) -> Cost:
 
 
 def choose_transposes(
-    notes: tuple[Note, ...], lowest: int, beat: int
+    notes: tuple[Note, ...], lowest: int, beat: int, *, octaves: bool = False
 ) -> tuple[tuple[int, int], ...]:
     '''Split the song into passages in one key and shift each, as (first beat, semitones).
 
@@ -311,7 +315,9 @@ def choose_transposes(
     notes outside the range, then the shift. A change of shift costs KEY_CHANGE_COST black keys.
     A black key costs more than any octave fold because resolving it changes the pitch class.
     Folding the skyline before the others keeps the melody's intervals when the song spans more
-    octaves than the range.
+    octaves than the range. With `octaves`, a change by whole octaves costs OCTAVE_CHANGE_COST
+    skyline notes outside the range instead, so a passage that crosses an edge of the range moves
+    whole rather than folding note by note.
     '''
     shifts = range(-24, 25)
     count = max((n.tick for n in notes), default=-1) // beat + 1
@@ -329,13 +335,22 @@ def choose_transposes(
         black = sum(not is_white(p + k) for p in pitches[b])
         return black, outside(k, tops[b]), outside(k, pitches[b]), abs(k)
 
+    octaves_of = {
+        k: tuple(j for j in shifts if octaves and j != k and (j - k) % 12 == 0) for k in shifts
+    }
     best: dict[int, Cost] = dict.fromkeys(shifts, (0, 0, 0, 0))
     sources: list[dict[int, int]] = []  # Per beat, the shift of the previous beat for each shift.
     for b in range(count):
         cheapest = min(shifts, key=lambda k: best[k])
         change = add(best[cheapest], (KEY_CHANGE_COST, 0, 0, 0))
-        source = {k: k if best[k] <= change else cheapest for k in shifts}
-        best = {k: add(best[k] if source[k] == k else change, cost(b, k)) for k in shifts}
+        source: dict[int, int] = {}
+        previous: dict[int, Cost] = {}
+        for k in shifts:
+            # The first of equal costs wins, so a shift stays on ties.
+            moves: list[tuple[Cost, int]] = [(best[k], k), (change, cheapest)]
+            moves += ((add(best[j], (0, OCTAVE_CHANGE_COST, 0, 0)), j) for j in octaves_of[k])
+            previous[k], source[k] = min(moves, key=lambda m: m[0])
+        best = {k: add(previous[k], cost(b, k)) for k in shifts}
         sources.append(source)
     k = min(shifts, key=lambda k: (best[k], abs(k)))
     path = [k]
@@ -408,13 +423,15 @@ def arrange(
     *,
     hold: bool = False,
     uniform: bool = False,
+    octaves: bool = False,
 ) -> Chart:
     '''With `hold`, a key stays down until its note ends or the key is pressed again.
-    With `uniform`, every beat shares one grid.'''
+    With `uniform`, every beat shares one grid. With `octaves`, passages move by whole octaves
+    into the range.'''
     tpb = song.ticks_per_beat
     numerator, denominator = song.time_signature
     beat = tpb * 4 // denominator
-    transposes = choose_transposes(song.notes, lowest, beat)
+    transposes = choose_transposes(song.notes, lowest, beat, octaves=octaves)
 
     def transpose(n: Note) -> Note:
         b = bisect.bisect_right(transposes, n.tick // beat, key=lambda t: t[0])
@@ -585,11 +602,13 @@ def default_chart_path(
     source: Path,
     max_keys: int | None,
     horn: bool,
+    octaves: bool,
     hold: bool,
     parts: tuple[int, ...] | None,
     human: bool,
 ) -> Path:
-    tags = ('.horn' if horn else '') + (f'.max{max_keys}' if max_keys else '')
+    tags = ('.horn' if horn else '') + ('.octaves' if octaves else '')
+    tags += f'.max{max_keys}' if max_keys else ''
     tags += ('.hold' if hold else '') + (f'.parts{'+'.join(map(str, parts))}' if parts else '')
     return source.with_suffix(tags + ('.human' if human else '') + '.md')
 
@@ -610,6 +629,9 @@ def main() -> None:
         '--max-keys', type=int, choices=range(1, 22), metavar='N', help='keys pressed at once'
     )
     parser.add_argument('--horn', action='store_true', help='play on the horn, C4 to B5')
+    parser.add_argument(
+        '--octaves', action='store_true', help='move passages by whole octaves into the range'
+    )
     parser.add_argument(
         '--hold', action='store_true', help='hold keys for the note durations, for sustaining'
     )
@@ -642,9 +664,11 @@ def main() -> None:
     if human and args.hold:
         parser.error('--hold does not apply to --human')
     lowest = HORN_LOWEST if args.horn else LOWEST
-    chart = arrange(song, args.max_keys, lowest, hold=args.hold, uniform=human)
+    chart = arrange(
+        song, args.max_keys, lowest, hold=args.hold, uniform=human, octaves=args.octaves
+    )
     chart_path: Path = args.output or default_chart_path(
-        source, args.max_keys, args.horn, args.hold, parts, human
+        source, args.max_keys, args.horn, args.octaves, args.hold, parts, human
     )
     if chart_path.resolve() == source.resolve():
         parser.error('the chart would overwrite the input, pass -o')
