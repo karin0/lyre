@@ -2,6 +2,7 @@
 
 import argparse
 import ast
+import bisect
 import math
 import re
 
@@ -25,6 +26,9 @@ PITCH_OF = {k: p for p, k in KEY_OF.items()}
 ROUGHNESS = (0, 1, 0.5, 0.1, 0.1, 0.1, 0.8)
 GRID_DIVISIONS = (1, 2, 3, 4, 6, 8, 12, 16)
 DRUM_CHANNEL = 9
+# Black-key notes a change of transposition must save. Several bars of a new key exceed it, a
+# chromatic run or a few borrowed chords do not.
+KEY_CHANGE_COST = 16
 LYRE_PROGRAM = 46  # General MIDI orchestral harp, the closest timbre to the lyre.
 BARS_PER_PARAGRAPH = 4
 MIDI_SUFFIXES = ('.mid', '.midi')
@@ -82,7 +86,7 @@ class Chart:
     tempos: tuple[tuple[Fraction, int], ...]  # (time, microseconds per quarter note)
     beat_ticks: int
     beats_per_bar: int
-    transpose: int
+    transposes: tuple[tuple[Fraction, int], ...]  # (time, semitones), from time 0
     song: Song
 
 
@@ -275,40 +279,71 @@ def fold(pitch: int, lowest: int) -> int:
     return pitch
 
 
-def skyline(notes: tuple[Note, ...]) -> tuple[int, ...]:
-    '''The pitches of the notes that no sounding note lies above at their onsets.
+def skyline(notes: tuple[Note, ...]) -> tuple[Note, ...]:
+    '''The notes that no sounding note lies above at their onsets.
 
     A note sounds at its onset even when it ends there, as a tap from a community chart does.
     '''
     sounding: list[Note] = []
-    tops: list[int] = []
+    tops: list[Note] = []
     for n in sorted(notes, key=lambda n: (n.tick, -n.pitch)):
         sounding = [m for m in sounding if m.tick == n.tick or m.end > n.tick]
         if all(m.pitch <= n.pitch for m in sounding):
-            tops.append(n.pitch)
+            tops.append(n)
         sounding.append(n)
     return tuple(tops)
 
 
-def choose_transpose(notes: tuple[Note, ...], lowest: int) -> int:
-    '''Minimize the notes on black keys, then the skyline notes outside the range, then all
-    notes outside the range, then the shift.
+# Notes on black keys, skyline notes outside the range, notes outside the range, semitones shifted.
+type Cost = tuple[int, int, int, int]
 
+
+def add(a: Cost, b: Cost) -> Cost:
+    return a[0] + b[0], a[1] + b[1], a[2] + b[2], a[3] + b[3]
+
+
+def choose_transposes(
+    notes: tuple[Note, ...], lowest: int, beat: int
+) -> tuple[tuple[int, int], ...]:
+    '''Split the song into passages in one key and shift each, as (first beat, semitones).
+
+    Each beat costs its notes on black keys, then its skyline notes outside the range, then its
+    notes outside the range, then the shift. A change of shift costs KEY_CHANGE_COST black keys.
     A black key costs more than any octave fold because resolving it changes the pitch class.
     Folding the skyline before the others keeps the melody's intervals when the song spans more
     octaves than the range.
     '''
-    pitches = tuple(n.pitch for n in notes)
-    tops = skyline(notes)
+    shifts = range(-24, 25)
+    count = max((n.tick for n in notes), default=-1) // beat + 1
+    pitches: list[list[int]] = [[] for _ in range(count)]
+    tops: list[list[int]] = [[] for _ in range(count)]
+    for n in notes:
+        pitches[n.tick // beat].append(n.pitch)
+    for n in skyline(notes):
+        tops[n.tick // beat].append(n.pitch)
 
-    def outside(k: int, moved: tuple[int, ...]) -> int:
+    def outside(k: int, moved: list[int]) -> int:
         return sum(not lowest <= p + k <= HIGHEST for p in moved)
 
-    def cost(k: int) -> tuple[int, int, int, int]:
-        black = sum(not is_white(p + k) for p in pitches)
-        return black, outside(k, tops), outside(k, pitches), abs(k)
+    def cost(b: int, k: int) -> Cost:
+        black = sum(not is_white(p + k) for p in pitches[b])
+        return black, outside(k, tops[b]), outside(k, pitches[b]), abs(k)
 
-    return min(range(-24, 25), key=cost)
+    best: dict[int, Cost] = dict.fromkeys(shifts, (0, 0, 0, 0))
+    sources: list[dict[int, int]] = []  # Per beat, the shift of the previous beat for each shift.
+    for b in range(count):
+        cheapest = min(shifts, key=lambda k: best[k])
+        change = add(best[cheapest], (KEY_CHANGE_COST, 0, 0, 0))
+        source = {k: k if best[k] <= change else cheapest for k in shifts}
+        best = {k: add(best[k] if source[k] == k else change, cost(b, k)) for k in shifts}
+        sources.append(source)
+    k = min(shifts, key=lambda k: (best[k], abs(k)))
+    path = [k]
+    for source in reversed(sources[1:]):
+        k = source[k]
+        path.append(k)
+    path.reverse()
+    return tuple((b, k) for b, k in enumerate(path) if not b or k != path[b - 1])
 
 
 def roughness(a: int, b: int) -> float:
@@ -379,8 +414,13 @@ def arrange(
     tpb = song.ticks_per_beat
     numerator, denominator = song.time_signature
     beat = tpb * 4 // denominator
-    transpose = choose_transpose(song.notes, lowest)
-    notes = tuple(replace(n, pitch=fold(n.pitch + transpose, lowest)) for n in song.notes)
+    transposes = choose_transposes(song.notes, lowest, beat)
+
+    def transpose(n: Note) -> Note:
+        b = bisect.bisect_right(transposes, n.tick // beat, key=lambda t: t[0])
+        return replace(n, pitch=fold(n.pitch + transposes[b - 1][1], lowest))
+
+    notes = tuple(map(transpose, song.notes))
     notes = resolve(notes, beat)
     offsets: dict[int, list[int]] = {}  # beat -> offsets in ticks of the onsets and releases
     for tick in (
@@ -417,7 +457,7 @@ def arrange(
         tempos=tuple((snap(tick), tempo) for tick, tempo in song.tempos),
         beat_ticks=beat,
         beats_per_bar=numerator,
-        transpose=transpose,
+        transposes=tuple((Fraction(b), k) for b, k in transposes),
         song=song,
     )
 
@@ -474,10 +514,14 @@ def render(chart: Chart, title: str, *, human: bool = False) -> str:
     body = '\n'.join(lines)
     numerator, denominator = chart.song.time_signature
     slot = f'one slot = {Fraction(1, song_slots * denominator)} note, ' if human else ''
+    changes = ''.join(
+        f', {k:+d} from bar {b // numerator + 1} beat {b % numerator + 1}'
+        for b, k in ((int(at), k) for at, k in chart.transposes[1:])
+    )
     return (
         f'# {title}\n\n'
         f'{start} BPM, {numerator}/{denominator}, {slot}'
-        f'transposed {chart.transpose:+d} semitones.\n\n'
+        f'transposed {chart.transposes[0][1]:+d} semitones{changes}.\n\n'
         f'```\n{body}\n```\n'
     )
 
