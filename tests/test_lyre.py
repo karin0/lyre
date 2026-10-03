@@ -29,7 +29,7 @@ def chart(
         tuple((Fraction(at), tempo) for at, tempo in tempos),
         TPB,
         4,
-        0,
+        ((Fraction(0), 0),),
         song(()),
     )
 
@@ -45,7 +45,27 @@ def test_key_map_covers_white_keys_c3_to_b5():
 
 def test_g_major_moves_to_c_major():
     g_major = tuple(tap(i * TPB, p) for i, p in enumerate((55, 57, 59, 60, 62, 64, 66, 67)))
-    assert lyre.choose_transpose(g_major, lyre.LOWEST) == 5
+    assert lyre.choose_transposes(g_major, lyre.LOWEST, TPB) == ((0, 5),)
+
+
+G_MAJOR = (55, 57, 59, 60, 62, 64, 67, 66)
+A_FLAT_MAJOR = (56, 58, 60, 61, 63, 65, 67, 68)
+
+
+def test_key_change_shifts_the_passage_after_it():
+    # Four bars of G major, then four of A flat major, one note per beat. One shift for both
+    # would leave 20 or 24 notes on black keys, more than a change of shift costs.
+    pitches = G_MAJOR * 4 + A_FLAT_MAJOR * 4
+    notes = tuple(tap(i * TPB, p) for i, p in enumerate(pitches))
+    text = lyre.render(lyre.arrange(song(notes)), 't')
+    assert text.split('\n')[2] == '120 BPM, 4/4, transposed +5 semitones, +4 from bar 9 beat 1.'
+    assert lyre.arrange(song(notes)).events[32] == (32, ((60, 0),))
+
+
+def test_brief_chromatic_passage_keeps_the_shift():
+    pitches = G_MAJOR * 4 + A_FLAT_MAJOR + G_MAJOR * 4
+    notes = tuple(tap(i * TPB, p) for i, p in enumerate(pitches))
+    assert lyre.choose_transposes(notes, lyre.LOWEST, TPB) == ((0, 5),)
 
 
 def test_out_of_range_is_folded_by_octaves():
@@ -128,7 +148,7 @@ def test_black_keys_outweigh_octave_folds():
     # but puts the C on a black key; shifting by 17 folds two notes and keeps every key white.
     pitches = (50, 52, 55, 59) * 5 + (60, 64, 66, 67, 71)
     g_major = tuple(tap(i * TPB, p) for i, p in enumerate(pitches))
-    assert lyre.choose_transpose(g_major, lyre.HORN_LOWEST) == 17
+    assert lyre.choose_transposes(g_major, lyre.HORN_LOWEST, TPB) == ((0, 17),)
 
 
 @pytest.mark.parametrize('length', [0, TPB // 4])
@@ -141,7 +161,7 @@ def test_horn_folds_the_accompaniment_before_the_melody(length: int):
         for i, top in enumerate(melody)
         for p in (48, 52, 55, top)
     )
-    assert lyre.choose_transpose(notes, lyre.HORN_LOWEST) == 0
+    assert lyre.choose_transposes(notes, lyre.HORN_LOWEST, TPB) == ((0, 0),)
 
 
 def test_held_melody_folds_after_the_arpeggio_under_it():
@@ -156,7 +176,7 @@ def test_held_melody_folds_after_the_arpeggio_under_it():
             *(tap(i * TPB + j * TPB // 4, p) for j, p in enumerate((43, 47, 50), 1)),
         )
     )
-    assert lyre.choose_transpose(notes, lyre.LOWEST) == -12
+    assert lyre.choose_transposes(notes, lyre.LOWEST, TPB) == ((0, -12),)
 
 
 def test_horn_keeps_every_key_on_the_upper_rows():
