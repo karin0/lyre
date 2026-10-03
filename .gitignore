@@ -8,5 +8,5 @@ __pycache__/
 /*.md
 !/README.md
 
-# Local charts and community transcriptions.
-/old/
+# Local songs, community charts, and the charts generated beside them.
+/songs/
