@@ -198,13 +198,29 @@ def test_without_octaves_a_passage_folds_note_by_note():
 def test_bass_folded_above_a_low_melody_is_dropped():
     # A melody D4 E4 over C3 and A3. On the horn, A3 would fold to A4 above the E4 nearer D4.
     notes = (tap(0, 62), tap(TPB, 48), tap(TPB, 57), tap(TPB, 64))
-    assert lyre.drop_crossings(notes, lyre.HORN_LOWEST) == notes[:2] + notes[3:]
+    assert lyre.drop_crossings(notes, lyre.HORN_LOWEST, TPB, TPB // 32) == notes[:2] + notes[3:]
 
 
 def test_melody_folded_above_a_chord_tone_is_kept():
     # A melody E5 A3 over C3 and C4. On the horn, A3 folds to A4 above the C4, and A4 is nearer E5.
     notes = (tap(0, 76), tap(TPB, 48), tap(TPB, 57), tap(TPB, 60))
-    assert lyre.drop_crossings(notes, lyre.HORN_LOWEST) == notes
+    assert lyre.drop_crossings(notes, lyre.HORN_LOWEST, TPB, TPB // 32) == notes
+
+
+def test_bass_folded_above_a_held_melody_note_is_dropped():
+    # A melody G4 held for a beat over A3. On the horn, A3 would fold to A4 above the G4.
+    notes = (Note(0, 67, TPB), tap(TPB // 2, 57))
+    assert lyre.drop_crossings(notes, lyre.HORN_LOWEST, TPB, TPB // 32) == notes[:1]
+
+
+def test_bass_folded_above_a_short_or_ending_note_is_kept():
+    # On the horn, A3 folds to A4 above a G4 of half a beat, as in an arpeggio shared by the
+    # hands, and above a G4 held for a beat that ends 1/32 beat after the A3 starts, as legato does.
+    tolerance = TPB // 32
+    short = (Note(0, 67, TPB // 2), tap(TPB // 4, 57))
+    ending = (Note(0, 67, TPB), tap(TPB - tolerance, 57))
+    assert lyre.drop_crossings(short, lyre.HORN_LOWEST, TPB, tolerance) == short
+    assert lyre.drop_crossings(ending, lyre.HORN_LOWEST, TPB, tolerance) == ending
 
 
 def test_horn_keeps_every_key_on_the_upper_rows():

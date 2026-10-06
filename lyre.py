@@ -361,15 +361,21 @@ def choose_transposes(
     return tuple((b, k) for b, k in enumerate(path) if not b or k != path[b - 1])
 
 
-def drop_crossings(notes: tuple[Note, ...], lowest: int) -> tuple[Note, ...]:
-    '''Drop the notes that folding would raise above the top note of their onset, at each onset
-    where that top note lies nearer the previous melody note than the highest folded note does.
+def drop_crossings(
+    notes: tuple[Note, ...], lowest: int, beat: int, tolerance: int
+) -> tuple[Note, ...]:
+    '''Drop the notes that folding would raise above the melody.
 
-    Either note may carry the melody, as a bass note under a low melody or a melody note under a
-    chord tone, and the melody usually moves by the smaller step.
+    At an onset, either the top note or the highest folded note may carry the melody, as a bass
+    note under a low melody or a melody note under a chord tone does. The melody usually moves by
+    the smaller step, so the raised notes are dropped where the top note lies nearer the previous
+    melody note. A skyline note held for a beat or more carries the melody over the notes struck
+    under it while it sounds on for more than `tolerance` ticks, so the notes raised above it are
+    dropped as well.
     '''
+    melody = skyline(notes)
     tops: dict[int, int] = {}
-    for n in skyline(notes):
+    for n in melody:
         tops[n.tick] = max(tops.get(n.tick, n.pitch), n.pitch)
     folded = tuple(fold(n.pitch, lowest) for n in notes)
     struck: dict[int, list[int]] = {}
@@ -386,6 +392,11 @@ def drop_crossings(notes: tuple[Note, ...], lowest: int) -> tuple[Note, ...]:
             previous = top
         else:
             previous = highest
+    held = tuple(m for m in melody if m.end - m.tick >= beat)
+    for i, n in enumerate(notes):
+        above = [m.pitch for m in held if m.tick < n.tick < m.end - tolerance and m.pitch > n.pitch]
+        if above and folded[i] > max(fold(max(above), lowest), n.pitch):
+            dropped.add(i)
     return tuple(n for i, n in enumerate(notes) if i not in dropped)
 
 
@@ -459,13 +470,14 @@ def arrange(
     tpb = song.ticks_per_beat
     numerator, denominator = song.time_signature
     beat = tpb * 4 // denominator
+    tolerance = tpb // 32
     transposes = choose_transposes(song.notes, lowest, beat, octaves=octaves)
 
     def transpose(n: Note) -> Note:
         b = bisect.bisect_right(transposes, n.tick // beat, key=lambda t: t[0])
         return replace(n, pitch=n.pitch + transposes[b - 1][1])
 
-    notes = drop_crossings(tuple(map(transpose, song.notes)), lowest)
+    notes = drop_crossings(tuple(map(transpose, song.notes)), lowest, beat, tolerance)
     notes = tuple(replace(n, pitch=fold(n.pitch, lowest)) for n in notes)
     notes = resolve(notes, beat)
     offsets: dict[int, list[int]] = {}  # beat -> offsets in ticks of the onsets and releases
@@ -473,10 +485,10 @@ def arrange(
         (n.tick for n in notes) if not hold else (t for n in notes for t in (n.tick, n.end))
     ):
         offsets.setdefault(tick // beat, []).append(tick % beat)
-    divisions = {b: choose_division(tuple(o), beat, tpb // 32) for b, o in offsets.items()}
+    divisions = {b: choose_division(tuple(o), beat, tolerance) for b, o in offsets.items()}
     if uniform:
         every = tuple(o for beat_offsets in offsets.values() for o in beat_offsets)
-        divisions = dict.fromkeys(offsets, choose_division(every, beat, tpb // 32))
+        divisions = dict.fromkeys(offsets, choose_division(every, beat, tolerance))
 
     def snap(tick: int) -> Fraction:
         b, offset = divmod(tick, beat)
