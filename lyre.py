@@ -361,6 +361,34 @@ def choose_transposes(
     return tuple((b, k) for b, k in enumerate(path) if not b or k != path[b - 1])
 
 
+def drop_crossings(notes: tuple[Note, ...], lowest: int) -> tuple[Note, ...]:
+    '''Drop the notes that folding would raise above the top note of their onset, at each onset
+    where that top note lies nearer the previous melody note than the highest folded note does.
+
+    Either note may carry the melody, as a bass note under a low melody or a melody note under a
+    chord tone, and the melody usually moves by the smaller step.
+    '''
+    tops: dict[int, int] = {}
+    for n in skyline(notes):
+        tops[n.tick] = max(tops.get(n.tick, n.pitch), n.pitch)
+    folded = tuple(fold(n.pitch, lowest) for n in notes)
+    struck: dict[int, list[int]] = {}
+    for i, n in enumerate(notes):
+        struck.setdefault(n.tick, []).append(i)
+    dropped: set[int] = set()
+    previous: int | None = None
+    for tick in sorted(tops):
+        top = fold(tops[tick], lowest)
+        crossing = [i for i in struck[tick] if folded[i] > max(top, notes[i].pitch)]
+        highest = max(folded[i] for i in struck[tick])
+        if crossing and previous is not None and abs(top - previous) < abs(highest - previous):
+            dropped.update(crossing)
+            previous = top
+        else:
+            previous = highest
+    return tuple(n for i, n in enumerate(notes) if i not in dropped)
+
+
 def roughness(a: int, b: int) -> float:
     ic = abs(a - b) % 12
     return ROUGHNESS[min(ic, 12 - ic)]
@@ -435,9 +463,10 @@ def arrange(
 
     def transpose(n: Note) -> Note:
         b = bisect.bisect_right(transposes, n.tick // beat, key=lambda t: t[0])
-        return replace(n, pitch=fold(n.pitch + transposes[b - 1][1], lowest))
+        return replace(n, pitch=n.pitch + transposes[b - 1][1])
 
-    notes = tuple(map(transpose, song.notes))
+    notes = drop_crossings(tuple(map(transpose, song.notes)), lowest)
+    notes = tuple(replace(n, pitch=fold(n.pitch, lowest)) for n in notes)
     notes = resolve(notes, beat)
     offsets: dict[int, list[int]] = {}  # beat -> offsets in ticks of the onsets and releases
     for tick in (

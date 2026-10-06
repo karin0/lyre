@@ -195,6 +195,18 @@ def test_without_octaves_a_passage_folds_note_by_note():
     assert lyre.choose_transposes(notes, lyre.HORN_LOWEST, TPB) == ((0, 0),)
 
 
+def test_bass_folded_above_a_low_melody_is_dropped():
+    # A melody D4 E4 over C3 and A3. On the horn, A3 would fold to A4 above the E4 nearer D4.
+    notes = (tap(0, 62), tap(TPB, 48), tap(TPB, 57), tap(TPB, 64))
+    assert lyre.drop_crossings(notes, lyre.HORN_LOWEST) == notes[:2] + notes[3:]
+
+
+def test_melody_folded_above_a_chord_tone_is_kept():
+    # A melody E5 A3 over C3 and C4. On the horn, A3 folds to A4 above the C4, and A4 is nearer E5.
+    notes = (tap(0, 76), tap(TPB, 48), tap(TPB, 57), tap(TPB, 60))
+    assert lyre.drop_crossings(notes, lyre.HORN_LOWEST) == notes
+
+
 def test_horn_keeps_every_key_on_the_upper_rows():
     notes = (tap(0, 43), tap(0, 67), tap(TPB, 50))
     chart = lyre.arrange(song(notes), lowest=lyre.HORN_LOWEST)
