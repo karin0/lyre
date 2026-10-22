@@ -298,7 +298,7 @@ def skyline(notes: tuple[Note, ...]) -> tuple[Note, ...]:
     return tuple(tops)
 
 
-# Notes on black keys, skyline notes outside the range, notes outside the range, semitones shifted.
+# Notes on black keys, melody notes outside the range, notes outside the range, semitones shifted.
 type Cost = tuple[int, int, int, int]
 
 
@@ -307,16 +307,21 @@ def add(a: Cost, b: Cost) -> Cost:
 
 
 def choose_transposes(
-    notes: tuple[Note, ...], lowest: int, beat: int, *, octaves: bool = False
+    notes: tuple[Note, ...],
+    melody: tuple[Note, ...],
+    lowest: int,
+    beat: int,
+    *,
+    octaves: bool = False,
 ) -> tuple[tuple[int, int], ...]:
     '''Split the song into passages in one key and shift each, as (first beat, semitones).
 
-    Each beat costs its notes on black keys, then its skyline notes outside the range, then its
+    Each beat costs its notes on black keys, then its `melody` notes outside the range, then its
     notes outside the range, then the shift. A change of shift costs KEY_CHANGE_COST black keys.
     A black key costs more than any octave fold because resolving it changes the pitch class.
-    Folding the skyline before the others keeps the melody's intervals when the song spans more
+    Folding the melody before the others keeps the melody's intervals when the song spans more
     octaves than the range. With `octaves`, a change by whole octaves costs OCTAVE_CHANGE_COST
-    skyline notes outside the range instead, so a passage that crosses an edge of the range moves
+    melody notes outside the range instead, so a passage that crosses an edge of the range moves
     whole rather than folding note by note.
     '''
     shifts = range(-24, 25)
@@ -325,7 +330,7 @@ def choose_transposes(
     tops: list[list[int]] = [[] for _ in range(count)]
     for n in notes:
         pitches[n.tick // beat].append(n.pitch)
-    for n in skyline(notes):
+    for n in melody:
         tops[n.tick // beat].append(n.pitch)
 
     def outside(k: int, moved: list[int]) -> int:
@@ -362,18 +367,17 @@ def choose_transposes(
 
 
 def drop_crossings(
-    notes: tuple[Note, ...], lowest: int, beat: int, tolerance: int
+    notes: tuple[Note, ...], melody: tuple[Note, ...], lowest: int, beat: int, tolerance: int
 ) -> tuple[Note, ...]:
     '''Drop the notes that folding would raise above the melody.
 
     At an onset, either the top note or the highest folded note may carry the melody, as a bass
     note under a low melody or a melody note under a chord tone does. The melody usually moves by
     the smaller step, so the raised notes are dropped where the top note lies nearer the previous
-    melody note. A skyline note held for a beat or more carries the melody over the notes struck
+    melody note. A `melody` note held for a beat or more carries the melody over the notes struck
     under it while it sounds on for more than `tolerance` ticks, so the notes raised above it are
     dropped as well.
     '''
-    melody = skyline(notes)
     tops: dict[int, int] = {}
     for n in melody:
         tops[n.tick] = max(tops.get(n.tick, n.pitch), n.pitch)
@@ -463,21 +467,25 @@ def arrange(
     hold: bool = False,
     uniform: bool = False,
     octaves: bool = False,
+    melody: tuple[Part, ...] = (),
 ) -> Chart:
     '''With `hold`, a key stays down until its note ends or the key is pressed again.
     With `uniform`, every beat shares one grid. With `octaves`, passages move by whole octaves
-    into the range.'''
+    into the range. The skyline of the `melody` parts, or of the whole song, is the melody.'''
     tpb = song.ticks_per_beat
     numerator, denominator = song.time_signature
     beat = tpb * 4 // denominator
     tolerance = tpb // 32
-    transposes = choose_transposes(song.notes, lowest, beat, octaves=octaves)
+    line = skyline(tuple(n for p in melody for n in p.notes) or song.notes)
+    transposes = choose_transposes(song.notes, line, lowest, beat, octaves=octaves)
 
     def transpose(n: Note) -> Note:
         b = bisect.bisect_right(transposes, n.tick // beat, key=lambda t: t[0])
         return replace(n, pitch=n.pitch + transposes[b - 1][1])
 
-    notes = drop_crossings(tuple(map(transpose, song.notes)), lowest, beat, tolerance)
+    notes = drop_crossings(
+        tuple(map(transpose, song.notes)), tuple(map(transpose, line)), lowest, beat, tolerance
+    )
     notes = tuple(replace(n, pitch=fold(n.pitch, lowest)) for n in notes)
     notes = resolve(notes, beat)
     offsets: dict[int, list[int]] = {}  # beat -> offsets in ticks of the onsets and releases
@@ -646,11 +654,13 @@ def default_chart_path(
     octaves: bool,
     hold: bool,
     parts: tuple[int, ...] | None,
+    melody: tuple[int, ...] | None,
     human: bool,
 ) -> Path:
     tags = ('.horn' if horn else '') + ('.octaves' if octaves else '')
     tags += f'.max{max_keys}' if max_keys else ''
     tags += ('.hold' if hold else '') + (f'.parts{'+'.join(map(str, parts))}' if parts else '')
+    tags += f'.melody{'+'.join(map(str, melody))}' if melody else ''
     return source.with_suffix(tags + ('.human' if human else '') + '.md')
 
 
@@ -684,6 +694,13 @@ def main() -> None:
         help='arrange only these parts, see --list-parts',
     )
     parser.add_argument(
+        '--melody',
+        type=int,
+        nargs='+',
+        metavar='N',
+        help='take the melody from these parts, see --list-parts',
+    )
+    parser.add_argument(
         '--list-parts', action='store_true', help='list the parts of the input and exit'
     )
     args = parser.parse_args()
@@ -697,19 +714,30 @@ def main() -> None:
         print('\n'.join(describe(i, p) for i, p in enumerate(song.parts)))
         return
     parts: tuple[int, ...] | None = args.parts and tuple(sorted(set(args.parts)))
-    if parts:
-        if parts[-1] >= len(song.parts) or parts[0] < 0:
+    melody: tuple[int, ...] | None = args.melody and tuple(sorted(set(args.melody)))
+    for chosen in (parts, melody):
+        if chosen and (chosen[-1] >= len(song.parts) or chosen[0] < 0):
             parser.error(f'the input has parts 0 to {len(song.parts) - 1}')
+    if parts and melody and not set(melody) <= set(parts):
+        parser.error('--melody takes parts among --parts')
+    melody_parts = tuple(song.parts[i] for i in melody or ())
+    if parts:
         song = replace(song, parts=tuple(song.parts[i] for i in parts))
     human: bool = args.human
     if human and args.hold:
         parser.error('--hold does not apply to --human')
     lowest = HORN_LOWEST if args.horn else LOWEST
     chart = arrange(
-        song, args.max_keys, lowest, hold=args.hold, uniform=human, octaves=args.octaves
+        song,
+        args.max_keys,
+        lowest,
+        hold=args.hold,
+        uniform=human,
+        octaves=args.octaves,
+        melody=melody_parts,
     )
     chart_path: Path = args.output or default_chart_path(
-        source, args.max_keys, args.horn, args.octaves, args.hold, parts, human
+        source, args.max_keys, args.horn, args.octaves, args.hold, parts, melody, human
     )
     if chart_path.resolve() == source.resolve():
         parser.error('the chart would overwrite the input, pass -o')

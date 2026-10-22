@@ -45,7 +45,7 @@ def test_key_map_covers_white_keys_c3_to_b5():
 
 def test_g_major_moves_to_c_major():
     g_major = tuple(tap(i * TPB, p) for i, p in enumerate((55, 57, 59, 60, 62, 64, 66, 67)))
-    assert lyre.choose_transposes(g_major, lyre.LOWEST, TPB) == ((0, 5),)
+    assert lyre.choose_transposes(g_major, lyre.skyline(g_major), lyre.LOWEST, TPB) == ((0, 5),)
 
 
 G_MAJOR = (55, 57, 59, 60, 62, 64, 67, 66)
@@ -65,7 +65,7 @@ def test_key_change_shifts_the_passage_after_it():
 def test_brief_chromatic_passage_keeps_the_shift():
     pitches = G_MAJOR * 4 + A_FLAT_MAJOR + G_MAJOR * 4
     notes = tuple(tap(i * TPB, p) for i, p in enumerate(pitches))
-    assert lyre.choose_transposes(notes, lyre.LOWEST, TPB) == ((0, 5),)
+    assert lyre.choose_transposes(notes, lyre.skyline(notes), lyre.LOWEST, TPB) == ((0, 5),)
 
 
 def test_out_of_range_is_folded_by_octaves():
@@ -148,7 +148,9 @@ def test_black_keys_outweigh_octave_folds():
     # but puts the C on a black key; shifting by 17 folds two notes and keeps every key white.
     pitches = (50, 52, 55, 59) * 5 + (60, 64, 66, 67, 71)
     g_major = tuple(tap(i * TPB, p) for i, p in enumerate(pitches))
-    assert lyre.choose_transposes(g_major, lyre.HORN_LOWEST, TPB) == ((0, 17),)
+    assert lyre.choose_transposes(g_major, lyre.skyline(g_major), lyre.HORN_LOWEST, TPB) == (
+        (0, 17),
+    )
 
 
 @pytest.mark.parametrize('length', [0, TPB // 4])
@@ -161,7 +163,7 @@ def test_horn_folds_the_accompaniment_before_the_melody(length: int):
         for i, top in enumerate(melody)
         for p in (48, 52, 55, top)
     )
-    assert lyre.choose_transposes(notes, lyre.HORN_LOWEST, TPB) == ((0, 0),)
+    assert lyre.choose_transposes(notes, lyre.skyline(notes), lyre.HORN_LOWEST, TPB) == ((0, 0),)
 
 
 def test_held_melody_folds_after_the_arpeggio_under_it():
@@ -176,7 +178,7 @@ def test_held_melody_folds_after_the_arpeggio_under_it():
             *(tap(i * TPB + j * TPB // 4, p) for j, p in enumerate((43, 47, 50), 1)),
         )
     )
-    assert lyre.choose_transposes(notes, lyre.LOWEST, TPB) == ((0, -12),)
+    assert lyre.choose_transposes(notes, lyre.skyline(notes), lyre.LOWEST, TPB) == ((0, -12),)
 
 
 # Two bars of C major in C3..B3, then two in C5..B5, one note per beat. On the horn, a single shift
@@ -186,31 +188,41 @@ LOW_THEN_HIGH = (48, 50, 52, 53, 55, 57, 59, 55, 72, 74, 76, 77, 79, 81, 83, 79)
 
 def test_octaves_move_a_passage_across_the_edge_of_the_range():
     notes = tuple(tap(i * TPB, p) for i, p in enumerate(LOW_THEN_HIGH))
-    transposes = lyre.choose_transposes(notes, lyre.HORN_LOWEST, TPB, octaves=True)
+    transposes = lyre.choose_transposes(
+        notes, lyre.skyline(notes), lyre.HORN_LOWEST, TPB, octaves=True
+    )
     assert transposes == ((0, 12), (8, 0))
 
 
 def test_without_octaves_a_passage_folds_note_by_note():
     notes = tuple(tap(i * TPB, p) for i, p in enumerate(LOW_THEN_HIGH))
-    assert lyre.choose_transposes(notes, lyre.HORN_LOWEST, TPB) == ((0, 0),)
+    assert lyre.choose_transposes(notes, lyre.skyline(notes), lyre.HORN_LOWEST, TPB) == ((0, 0),)
 
 
 def test_bass_folded_above_a_low_melody_is_dropped():
     # A melody D4 E4 over C3 and A3. On the horn, A3 would fold to A4 above the E4 nearer D4.
     notes = (tap(0, 62), tap(TPB, 48), tap(TPB, 57), tap(TPB, 64))
-    assert lyre.drop_crossings(notes, lyre.HORN_LOWEST, TPB, TPB // 32) == notes[:2] + notes[3:]
+    assert (
+        lyre.drop_crossings(notes, lyre.skyline(notes), lyre.HORN_LOWEST, TPB, TPB // 32)
+        == notes[:2] + notes[3:]
+    )
 
 
 def test_melody_folded_above_a_chord_tone_is_kept():
     # A melody E5 A3 over C3 and C4. On the horn, A3 folds to A4 above the C4, and A4 is nearer E5.
     notes = (tap(0, 76), tap(TPB, 48), tap(TPB, 57), tap(TPB, 60))
-    assert lyre.drop_crossings(notes, lyre.HORN_LOWEST, TPB, TPB // 32) == notes
+    assert (
+        lyre.drop_crossings(notes, lyre.skyline(notes), lyre.HORN_LOWEST, TPB, TPB // 32) == notes
+    )
 
 
 def test_bass_folded_above_a_held_melody_note_is_dropped():
     # A melody G4 held for a beat over A3. On the horn, A3 would fold to A4 above the G4.
     notes = (Note(0, 67, TPB), tap(TPB // 2, 57))
-    assert lyre.drop_crossings(notes, lyre.HORN_LOWEST, TPB, TPB // 32) == notes[:1]
+    assert (
+        lyre.drop_crossings(notes, lyre.skyline(notes), lyre.HORN_LOWEST, TPB, TPB // 32)
+        == notes[:1]
+    )
 
 
 def test_bass_folded_above_a_short_or_ending_note_is_kept():
@@ -219,8 +231,13 @@ def test_bass_folded_above_a_short_or_ending_note_is_kept():
     tolerance = TPB // 32
     short = (Note(0, 67, TPB // 2), tap(TPB // 4, 57))
     ending = (Note(0, 67, TPB), tap(TPB - tolerance, 57))
-    assert lyre.drop_crossings(short, lyre.HORN_LOWEST, TPB, tolerance) == short
-    assert lyre.drop_crossings(ending, lyre.HORN_LOWEST, TPB, tolerance) == ending
+    assert (
+        lyre.drop_crossings(short, lyre.skyline(short), lyre.HORN_LOWEST, TPB, tolerance) == short
+    )
+    assert (
+        lyre.drop_crossings(ending, lyre.skyline(ending), lyre.HORN_LOWEST, TPB, tolerance)
+        == ending
+    )
 
 
 def test_horn_keeps_every_key_on_the_upper_rows():
@@ -229,13 +246,28 @@ def test_horn_keeps_every_key_on_the_upper_rows():
     assert all(p >= lyre.HORN_LOWEST for _, keys in chart.events for p, _ in keys)
 
 
+def test_melody_parts_keep_their_notes_in_the_range():
+    # A melody D5 D6 rests while the other hand plays D3 E3, which the skyline then holds. Keeping
+    # the octave of the melody pushes the accompaniment below C3.
+    melody = Part('', 0, None, (tap(0, 74), tap(TPB, 86)))
+    accompaniment = Part('', 1, None, (tap(2 * TPB, 50), tap(3 * TPB, 52)))
+    both = Song((melody, accompaniment), TPB, ((0, 500_000),), (4, 4))
+
+    def octave(chart: Chart) -> int:
+        (_, ((low, _),)), (_, ((high, _),)) = chart.events[:2]
+        return high - low
+
+    assert octave(lyre.arrange(both)) == 0
+    assert octave(lyre.arrange(both, melody=(melody,))) == 12
+
+
 def test_default_chart_path_names_the_options():
     source = Path('dir/song.mid')
-    assert lyre.default_chart_path(source, None, False, False, False, None, False) == Path(
+    assert lyre.default_chart_path(source, None, False, False, False, None, None, False) == Path(
         'dir/song.md'
     )
-    assert lyre.default_chart_path(source, 2, True, True, False, (0, 6), True) == Path(
-        'dir/song.horn.octaves.max2.parts0+6.human.md'
+    assert lyre.default_chart_path(source, 2, True, True, False, (0, 6), (0,), True) == Path(
+        'dir/song.horn.octaves.max2.parts0+6.melody0.human.md'
     )
 
 
