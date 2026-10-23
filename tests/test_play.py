@@ -68,14 +68,27 @@ def test_chart_without_tempo_line_is_rejected():
 
 
 def test_timeline_releases_held_keys_first_and_taps_last():
-    notes = ((0, 1, 'Q'), (1, 1, 'Q'), (1, 1, 'A'))
+    notes = ((0, 1, 'Q'), (0, 1, 'W'), (1, 1, 'A'), (1, 1, 'W'))
+    # W is pressed again at its release, so it goes up REPRESS_GAP earlier.
     assert [(t, k, down) for t, _, k, down in play.timeline(notes)] == [
         (0, 'Q', True),
+        (0, 'W', True),
+        (1 - play.REPRESS_GAP, 'W', False),
         (1, 'Q', False),
         (1, 'A', True),
-        (1, 'Q', True),
+        (1, 'W', True),
         (1, 'A', False),
-        (1, 'Q', False),
+        (1, 'W', False),
+    ]
+
+
+def test_timeline_releases_a_key_held_shorter_than_the_gap_right_after_its_press():
+    notes = ((0, 0.01, 'Q'), (0.01, 0.01, 'Q'))
+    assert [(t, k, down) for t, _, k, down in play.timeline(notes)] == [
+        (0, 'Q', True),
+        (0, 'Q', False),
+        (0.01, 'Q', True),
+        (0.01, 'Q', False),
     ]
 
 

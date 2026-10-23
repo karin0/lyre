@@ -18,6 +18,9 @@ type Note = tuple[float, float, str]
 HEADER = re.compile(r'([\d.]+) BPM, \d+/(\d+)')
 TOKEN = re.compile(r'<([\d.]+)>|\(([A-Za-z]+)\)|([A-Za-z ])')
 START_DELAY = 1  # Time to switch to the game window.
+# The game reads keys once a frame and drops a press that follows a release of the same key
+# in one frame. Two frames at the lowest frame rate of 30 fps cover the jitter of a frame.
+REPRESS_GAP = 2 / 30
 POLL = 0.02
 TRIGGERS = frozenset(('k', ',', 'space'))
 QUIT = '`'
@@ -62,11 +65,15 @@ def parse_chart(text: str) -> tuple[Note, ...]:
 def timeline(notes: tuple[Note, ...]) -> list[tuple[float, int, str, bool]]:
     '''Key actions (seconds, order, key, down) sorted by time.
 
-    At one moment, held keys release before new presses so that a key can be pressed again,
-    and taps release after all presses so that a chord goes down together.
+    At one moment, held keys release before new presses, and taps release after all presses
+    so that a chord goes down together. A held key pressed again at its release goes up
+    REPRESS_GAP earlier, or right after its press if it is held shorter than that.
     '''
+    presses = {(press, key) for press, _, key in notes}
     actions: list[tuple[float, int, str, bool]] = []
     for press, release, key in notes:
+        if (release, key) in presses:
+            release = max(press, release - REPRESS_GAP)
         actions.append((press, 1, key, True))
         actions.append((release, 2 if release == press else 0, key, False))
     return sorted(actions)
